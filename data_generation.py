@@ -67,12 +67,12 @@ def create_vehicle(client, pawn_path):
     -------
 
     """
-    pose = airsim.Pose(airsim.Vector3r(3,3,0))
+    pose = airsim.Pose(airsim.Vector3r(0,0,0))
     client.simAddVehicle(pawn_path, "simpleflight", pose, pawn_path)
     client.enableApiControl(True, vehicle_name=pawn_path)
 
 
-def teleport(client, vehicle_name, coordinates):
+def teleport(client, vehicle_name, coordinates,orientation = [0,0,0]):
     """
     Teleport a vehicle to coordinates and hover
     Parameters
@@ -87,10 +87,13 @@ def teleport(client, vehicle_name, coordinates):
     """
     pose = airsim.Pose(airsim.Vector3r(coordinates[0],
                                        coordinates[1],
-                                       coordinates[2]))
+                                       coordinates[2]),
+                       airsim.to_quaternion(orientation[0],
+                                            orientation[1],
+                                            orientation[2]))
     client.simSetVehiclePose(pose, True, vehicle_name)
-    client.takeoffAsync().join()
-    client.hoverAsync(vehicle_name).join()
+    client.takeoffAsync(vehicle_name=vehicle_name).join()
+    #client.hoverAsync(vehicle_name).join()
 
 
 def get_coordinates(center,radius, angle):
@@ -106,7 +109,7 @@ def get_distance(coord1,coord2):
     return math.sqrt((coord2[0]-coord1[0])**2 + (coord2[1]-coord1[1])**2)
 
 
-def generate_travel(center,radius):
+def generate_travel(center,radius,speed):
     flag_farenough = False
     angle_start = random.randint(1,360)
     start = get_coordinates(center,radius,angle_start)
@@ -121,7 +124,7 @@ def generate_travel(center,radius):
     altitude_change = random.uniform(-1,1) * center[2] * random.randint(5,20) / 100
     start[2] = start[2] + round(altitude_change/2)
     end[2] = end[2] - round(altitude_change/2)
-    trip = travel(start,end,25,angle_start,angle_end)
+    trip = travel(start,end,speed,angle_start,angle_end)
 
     return trip
 
@@ -160,6 +163,28 @@ def change_weather(client: airsim.MultirotorClient, weather_param: WeatherParame
         client.simEnableWeather(True)
         client.simSetWeatherParameter(weather_param,val)
 
+
+def set_next_position(client,travel:travel,vehicle_name,t):
+    #return true if arrived
+    state = client.getMultirotorState(vehicle_name=vehicle_name)
+    x,y,z = state.kinematics_estimated.position.x_val, state.kinematics_estimated.position.y_val, state.kinematics_estimated.position.z_val
+    xf,yf,zf = travel.end_coordinates[0],travel.end_coordinates[1],travel.end_coordinates[2]
+    distance_left = np.sqrt((xf - x) ** 2 + (yf - y) ** 2 + (zf - z) ** 2)
+    distance_per_t = travel.speed * t
+    if distance_left <= distance_per_t:
+        next_x = xf
+        next_y = yf
+        next_z = zf
+        teleport(client, vehicle_name, [next_x, next_y, next_z])
+        return True
+    else:
+        next_x = x + (xf - x) * (travel.speed * t) / distance_left
+        next_y = y + (yf - y) * (travel.speed * t) / distance_left
+        next_z = z + (zf - z) * (travel.speed * t) / distance_left
+        teleport(client, vehicle_name, [next_x, next_y, next_z])
+        return  False
+
+
 def simulation(camera_vehicle,other_vehicle): #maybe set other vehicle to a list
     client = airsim.MultirotorClient()
     client.confirmConnection()
@@ -170,6 +195,7 @@ def simulation(camera_vehicle,other_vehicle): #maybe set other vehicle to a list
     #player start place in map center
     #teleport before spawning other_vehicle
     altitude = random.randint(-600,-300)
+    speed = 25
     print(altitude)
     center_data = client.getMultirotorState(vehicle_name=camera_vehicle)
 
@@ -177,8 +203,8 @@ def simulation(camera_vehicle,other_vehicle): #maybe set other vehicle to a list
               center_data.kinematics_estimated.position.x_val,
               altitude)
     radius = random.randint(200,400)
-    cam_travel = generate_travel(center,radius)
-    other_travel = generate_travel(center,radius)
+    cam_travel = generate_travel(center,radius,speed)
+    other_travel = generate_travel(center,radius,speed)
     estimate_trajectory(center,radius,cam_travel,other_travel)
 
     # set weather
@@ -187,54 +213,30 @@ def simulation(camera_vehicle,other_vehicle): #maybe set other vehicle to a list
     weather_val = random.randint(20,80) /100
     change_weather(client,weather,weather_val)
     print("wheather : ",weather," | intensity :",weather_val)
-    create_vehicle(client,other_vehicle)
+    #setup cam vehicle
     client.enableApiControl(True, vehicle_name=camera_vehicle)
-    client.enableApiControl(True, vehicle_name=other_vehicle)
-    client.armDisarm(True,vehicle_name=camera_vehicle)
-    client.armDisarm(True,vehicle_name=other_vehicle)
-
+    client.armDisarm(True, vehicle_name=camera_vehicle)
     client.takeoffAsync(vehicle_name=camera_vehicle).join()
+    teleport(client, camera_vehicle, cam_travel.start_coordinates)
+
+    #setup second
+    create_vehicle(client,other_vehicle)
+    client.enableApiControl(True, vehicle_name=other_vehicle)
+    client.armDisarm(True,vehicle_name=other_vehicle)
     client.takeoffAsync(vehicle_name=other_vehicle).join()
-
-    teleport(client,camera_vehicle,cam_travel.start_coordinates)
     teleport(client,other_vehicle,other_travel.start_coordinates)
-    cam = client.moveToPositionAsync(cam_travel.end_coordinates[0],
-                                     cam_travel.end_coordinates[1],
-                                     cam_travel.end_coordinates[2],
-                                     cam_travel.speed,
-                                     vehicle_name=camera_vehicle,
-                                     drivetrain=airsim.DrivetrainType.ForwardOnly,
-                                     yaw_mode=airsim.YawMode(False,0))
 
-    other = client.moveToPositionAsync(other_travel.end_coordinates[0],
-                               other_travel.end_coordinates[1],
-                               other_travel.end_coordinates[2],
-                               other_travel.speed,
-                               vehicle_name=other_vehicle,
-                               drivetrain=airsim.DrivetrainType.ForwardOnly,
-                               yaw_mode=airsim.YawMode(False, 0))
-
+    other_arrived = False
+    cam_arrived = False
     count = 1
-    cam_data = client.getMultirotorState(vehicle_name=camera_vehicle)
-    cam_coord = [cam_data.kinematics_estimated.position.x_val,cam_data.kinematics_estimated.position.y_val]
-
-    other_data = client.getMultirotorState(vehicle_name=other_vehicle)
-    other_coord = [other_data.kinematics_estimated.position.x_val, other_data.kinematics_estimated.position.y_val]
-
-    while get_distance(other_coord,other_travel.end_coordinates) > 30 or get_distance(cam_coord,cam_travel.end_coordinates) > 30:
-
+    pic_delay = 1 #second now but change to fps next
+    # save_img(client,str(count))
+    while other_arrived == False and cam_arrived == False:
+        other_arrived = set_next_position(client,other_travel,other_vehicle,pic_delay)
+        cam_arrived = set_next_position(client,cam_travel,camera_vehicle,pic_delay)
+        count += 1
         print(count)
         # save_img(client,str(count))
-        count += 1
-        time.sleep(1)
-        cam_data = client.getMultirotorState(vehicle_name=camera_vehicle)
-        cam_coord = [cam_data.kinematics_estimated.position.x_val, cam_data.kinematics_estimated.position.y_val]
-        other_data = client.getMultirotorState(vehicle_name=other_vehicle)
-        other_coord = [other_data.kinematics_estimated.position.x_val, other_data.kinematics_estimated.position.y_val]
-        print(get_distance(other_coord,other_travel.end_coordinates))
-        print(get_distance(cam_coord,cam_travel.end_coordinates))
-    cam.join()
-    other.join()
     client.reset()
 
 
