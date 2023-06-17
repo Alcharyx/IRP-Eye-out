@@ -2,6 +2,8 @@ import math
 import time
 from pathlib import Path
 import shutil
+import cProfile
+from skimage import color
 import random
 import numpy as np
 import airsim
@@ -9,7 +11,8 @@ from tqdm import tqdm
 import matplotlib.pyplot as plt
 from mpl_toolkits.mplot3d import Axes3D
 import json
-
+import cv2
+import winsound
 
 class travel:
     def __init__(self,start,end,speed,angle_start,angle_end):
@@ -31,7 +34,7 @@ class WeatherParameter:
     Fog = 7 #very low visibility
 
 
-def save_img(client, frame,camera_angle, save_path,sim_count):
+def save_img(client, frame,camera_angle, save_path,sim_count,camera_vehicle,other_vehicle_dict):
     """
     Save images from different angles with high resolution camera
     Parameters
@@ -46,14 +49,20 @@ def save_img(client, frame,camera_angle, save_path,sim_count):
     """
     img_list = []
     for i in camera_angle:
-        response = client.simGetImages([airsim.ImageRequest(i, airsim.ImageType.Scene, False, False)])
+        response = client.simGetImages([airsim.ImageRequest(i, airsim.ImageType.Scene, False, False)],"",False)
         #print("img ", i)
         img_list.append(response[0])
-    for i in range(len(camera_angle)):
-        #print("save img ", camera_angle[i])
-        img1d = np.frombuffer(img_list[i].image_data_uint8, dtype=np.uint8)
-        img_rgb = img1d.reshape(img_list[i].height, img_list[i].width, 3)
-        airsim.write_png(str(save_path / ("{:02d}".format(sim_count) + '_' + "{:03d}".format(frame) + '_' + camera_angle[i] + '.png ')), img_rgb)
+    label = checkbb_camera(client,camera_vehicle,camera_angle,other_vehicle_dict)
+    if label:
+        for i in range(len(camera_angle)):
+            #print("save img ", camera_angle[i])
+            img1d = np.frombuffer(img_list[i].image_data_uint8, dtype=np.uint8)
+            img_rgb = img1d.reshape(img_list[i].height, img_list[i].width, 3)
+            gray_image = color.rgb2gray(img_rgb) * 255
+            frame_path = str(save_path / ("{:02d}".format(sim_count) + '_' + "{:03d}".format(frame) + '_' + camera_angle[i] + '.png '))
+            cv2.imwrite(frame_path, gray_image)
+    return label
+
 
 
 def create_vehicle(client, pawn_path,name):
@@ -95,7 +104,7 @@ def teleport(client, vehicle_name, coordinates,orientation = [0,0,0]):
                                              orientation[2]))
     client.simSetVehiclePose(pose, True, vehicle_name)
     #client.moveToZAsync(coordinates[2], 10,vehicle_name=vehicle_name).join()
-    client.takeoffAsync(vehicle_name=vehicle_name).join()
+    #client.takeoffAsync(vehicle_name=vehicle_name).join()
     #client.hoverAsync(vehicle_name).join()
 
 
@@ -163,6 +172,7 @@ def estimate_trajectory(center,radius,travel1: travel,travel2: travel,plot:bool,
     plt.savefig(save_path / ("{:02d}".format(sim_count) +"_estimated_path.png"))
     if plot:
         plt.show()
+    plt.close()
 
 def log_dict(cam_travel,other_travel, weather_param, weather_val,center_cam,center_other,radius, other_vehicle_dict,frame_data):
     log = {}
@@ -208,7 +218,7 @@ def set_next_position(client,travel:travel,vehicle_name,t,orientation):
     elif orientation == "random":
         yaw = np.radians(random.randint(0,360))
         roll = 0
-        pitch = np.radians(random.randint(-50,50))
+        pitch = 0
     else:
         yaw = 0
         roll = 0
@@ -228,12 +238,12 @@ def set_next_position(client,travel:travel,vehicle_name,t,orientation):
         teleport(client, vehicle_name,
                  [next_x, next_y, next_z],
                  [pitch, roll, yaw])
-        return  False
+        return False
 
 
 def create_all_vehicles(client,vehicle_dict):
     for key in vehicle_dict.keys():
-        create_vehicle(client, vehicle_dict[key]["PawnBP"], vehicle_dict[key]["Name"])
+        create_vehicle(client, vehicle_dict[key]["PawnPath"], vehicle_dict[key]["Name"])
     go_to_graveyard(client,vehicle_dict)
 
 
@@ -260,9 +270,9 @@ def go_to_start(client,vehicle_list):
 
 
 def altitude_type():
-    diff_list = [-50,0,50]
+    diff_list = [-100,-50,0,50,100]
     diff = random.choice(diff_list)
-    altitude = random.randint(-500, -300)
+    altitude = random.randint(-700, -400)
     return altitude, altitude+diff
 
 def setdetection(client, camera_vehicle, camera_angle,vehicle_dict,detection_radius_m):
@@ -288,6 +298,7 @@ def checkbb_camera(client,camera_vehicle,camera_angle,other_vehicle_dict): #mana
             if distance >= other_vehicle_dict["Max_dist_m"]:
                 continue
             label[i] = {"name": info.name,
+                        "yolo_class": other_vehicle_dict["yolo_class"],
                         "box2D": {"x_max": info.box2D.max.x_val,
                                   "y_max": info.box2D.max.y_val,
                                   "x_min": info.box2D.min.x_val,
@@ -295,7 +306,7 @@ def checkbb_camera(client,camera_vehicle,camera_angle,other_vehicle_dict): #mana
     return label
 
 
-def get_frame_data(client,camera_vehicle, other_vehicle_dict,camera_angle):
+def get_frame_data(client,camera_vehicle, other_vehicle_dict,current_level,timeoftheday,label):
     v1_data = client.getMultirotorState(vehicle_name=camera_vehicle)
     v2_data = client.getMultirotorState(vehicle_name=other_vehicle_dict["Name"])
     v1_yaw = v1_data.kinematics_estimated.orientation.z_val
@@ -317,13 +328,13 @@ def get_frame_data(client,camera_vehicle, other_vehicle_dict,camera_angle):
                     v2_data.kinematics_estimated.orientation.y_val,
                     v2_data.kinematics_estimated.orientation.z_val]}
     dist = get_distance(v1_log["coordinate"],v2_log["coordinate"])
-    label = checkbb_camera(client, camera_vehicle, camera_angle,other_vehicle_dict)
 
-    return {camera_vehicle:v1_log, other_vehicle_dict["Name"]:v2_log, "distance":dist, "angle":np.degrees(v2_yaw - v1_yaw),"label":label} #positive diff = clockwise
+    return {"currentlevel":current_level, "timeoftheday":timeoftheday,camera_vehicle:v1_log, other_vehicle_dict["Name"]:v2_log,
+            "distance":dist, "angle":np.degrees(v2_yaw - v1_yaw),"label":label} #positive diff angle = clockwise
 
 
 
-def simulation(client,camera_vehicle,other_vehicle_dict,camera_angle,save_path:Path,plot,sim_count): #maybe set other vehicle to a list
+def simulation(client,camera_vehicle,other_vehicle_dict,camera_angle,save_path:Path,plot,sim_count,current_level,timeoftheday_dict): #maybe set other vehicle to a list
 
     save_path.mkdir(exist_ok=True)
     cam_altitude,other_altitude = altitude_type()
@@ -336,7 +347,8 @@ def simulation(client,camera_vehicle,other_vehicle_dict,camera_angle,save_path:P
     center_other = (center_data.kinematics_estimated.position.x_val,
                     center_data.kinematics_estimated.position.y_val,
                     other_altitude)
-    radius = random.randint(400,800)
+    max_dist = other_vehicle_dict["Max_dist_m"]
+    radius = random.randint(round(max_dist * 0.9),round(max_dist * 1.1))
     cam_travel = generate_travel(center_cam,radius,speed)
     other_travel = generate_travel(center_other,radius,speed)
     estimate_trajectory(center_cam,radius,cam_travel,other_travel,plot,save_path,sim_count)
@@ -346,38 +358,50 @@ def simulation(client,camera_vehicle,other_vehicle_dict,camera_angle,save_path:P
                              WeatherParameter.Snow])
     weather_val = random.randint(20,80) /100
     change_weather(client,weather,weather_val)
+
+
     #print("wheather : ",weather," | intensity :",weather_val)
     #setup vehicle
     client.enableApiControl(True, vehicle_name=camera_vehicle)
     client.armDisarm(True, vehicle_name=camera_vehicle)
     client.enableApiControl(True, vehicle_name=other_vehicle_dict["Name"])
     client.armDisarm(True, vehicle_name=other_vehicle_dict["Name"])
-    teleport(client, camera_vehicle, cam_travel.start_coordinates)
-    teleport(client,other_vehicle_dict["Name"],other_travel.start_coordinates)
     other_arrived = False
     cam_arrived = False
     pic_count = 1
     pic_delay = 2 #second now but change to fps next
+    #set timeoftheday
+    rand_time = random.choice(list(timeoftheday_dict.keys()))
+    client.simSetTimeOfDay(True, timeoftheday_dict[rand_time], False, 1, 1000)  # sun not moving for a whole
+    teleport(client, camera_vehicle, cam_travel.start_coordinates)
+    teleport(client, other_vehicle_dict["Name"], other_travel.start_coordinates)
+    time.sleep(1)
     client.simPause(True)
-    save_img(client, pic_count, camera_angle, save_path, sim_count)
-    frame_data[str(pic_count)] = get_frame_data(client, camera_vehicle, other_vehicle_dict,camera_angle)
+    bbx_dict = save_img(client, pic_count, camera_angle, save_path, sim_count,camera_vehicle,other_vehicle_dict)
+    frame_data[str(pic_count)] = get_frame_data(client, camera_vehicle, other_vehicle_dict,rand_time,current_level,bbx_dict)
     client.simPause(False)
+    pic_count += 1
     while other_arrived == False and cam_arrived == False:
-        pic_count += 1
+
         #print(pic_count)
-
-        cam_arrived = set_next_position(client,cam_travel,camera_vehicle,pic_delay,"osef")
-
-        other_arrived = set_next_position(client, other_travel, other_vehicle_dict["Name"], pic_delay, "osef")
+        # set time of the day
+        rand_time = random.choice(list(timeoftheday_dict.keys()))
+        client.simSetTimeOfDay(True, timeoftheday_dict[rand_time], False, 1, 1000)  # sun not moving for a whole
+        cam_arrived = set_next_position(client,cam_travel,camera_vehicle,pic_delay,None)
+        other_arrived = set_next_position(client, other_travel, other_vehicle_dict["Name"], pic_delay, "random")
+        time.sleep(1)
         client.simPause(True)
-        save_img(client,pic_count,camera_angle, save_path,sim_count)
-        frame_data[str(pic_count)] = get_frame_data(client, camera_vehicle, other_vehicle_dict,camera_angle)
+        bbx_dict = save_img(client,pic_count,camera_angle, save_path,sim_count,camera_vehicle,other_vehicle_dict)
+        if bbx_dict:
+
+            frame_data[str(pic_count)] = get_frame_data(client, camera_vehicle, other_vehicle_dict,rand_time,current_level, bbx_dict)
+            pic_count += 1
         client.simPause(False)
-    #client.armDisarm(False, vehicle_name=other_vehicle)
-    #client.armDisarm(False, vehicle_name=camera_vehicle)
-    #go_to_start(client,[camera_vehicle]) #not useful
+        if pic_count >=60:
+            cam_arrived = True
     time.sleep(5)
     return log_dict(cam_travel, other_travel,weather,weather_val,center_cam,center_other,radius,other_vehicle_dict,frame_data)
+
 
 def create_folders(save_path:Path,vehicle_list:list):
 
@@ -390,14 +414,37 @@ def create_folders(save_path:Path,vehicle_list:list):
             create.mkdir()
 
 
-def dataset_generation(save_path:Path, vehicle_dict:dict, vehicle_used, sim_count_per_vehicle,camera_angle:list):
+def initialize_level(client,vehicle_dict,camera_angle,camera_vehicle):
+    # Create vehicles
+    create_all_vehicles(client,vehicle_dict)
+    detection_radius_m = 1000
+    setdetection(client, camera_vehicle,camera_angle,vehicle_dict,detection_radius_m)
+
+
+def change_level(current_sim,sim_num,level_list):
+    if sim_num < len(level_list):
+        raise ValueError("Number of simulation smaller than list of level")
+    num_level = len(level_list)
+    list_change = []
+    list_change.append(1)
+    for i in range(1,num_level):
+        list_change.append(list_change[i-1] + (sim_num // num_level))
+
+    if current_sim in list_change:
+        return True
+    else:
+        return False
+
+
+def dataset_generation(save_path:Path, vehicle_dict:dict, vehicle_used, sim_count_per_vehicle,camera_angle:list,level_list,timeoftheday_dict):
     # set randomness
     seed_value = random.randint(0,10000)
     random.seed(seed_value)
 
     # Create save folder if doesn't exist
-
-    create_folders(save_path,vehicle_used)
+    if not (save_path / "data").exists():
+        (save_path / "data").mkdir()
+    create_folders(save_path / "data",vehicle_used)
 
     vehicle_dict = {k: v for k, v in vehicle_dict.items() if any(value in vehicle_used for value in v.values())}
     # Create client
@@ -405,30 +452,167 @@ def dataset_generation(save_path:Path, vehicle_dict:dict, vehicle_used, sim_coun
     client.confirmConnection()
     client.enableApiControl(True)
 
-    # Create vehicles
-    create_all_vehicles(client,vehicle_dict)
-
     # Start simulation
     sim_log = {}
     sim_log["random_seed"] = seed_value
     #get setting
     camera_vehicle = "camera_vehicle"
-
-    # Set detector
-
-    detection_radius_m = 1000
-    setdetection(client, camera_vehicle,camera_angle,vehicle_dict,detection_radius_m)
+    dict_camera = {}
+    for angle in camera_angle:
+        test_img = client.simGetImages([airsim.ImageRequest(angle, airsim.ImageType.Scene, False, False)], "camera_vehicle",False)[0]
+        dict_camera[angle] = {"resolution":[test_img.width,test_img.height]}
+    sim_log["camera_details"] = dict_camera
     sim_count = 1 #create count with index in for
+    #Level Management
+    level_idx =0
+    current_level = "StartLevel"
     for loop in tqdm(range(1,sim_count_per_vehicle+1)):
+        if change_level(loop,sim_count_per_vehicle,level_list):
+            current_level = level_list[level_idx]
+            time.sleep(2)  # time for engine to load everything
+            winsound.PlaySound("mixkit-elevator-tone-2863.wav.wav", winsound.SND_FILENAME)
+            input("Change level to "+current_level)
+            #client.simLoadLevel(current_level) #Loading Level API is fairly random change manually if needed
+            #time.sleep(20) #time for level to load
+            # Create client
+            client = airsim.MultirotorClient()
+            client.confirmConnection()
+            client.enableApiControl(True)
+            initialize_level(client,vehicle_dict,camera_angle,camera_vehicle)
+            level_idx += 1
+
         for vehicle_key in tqdm(vehicle_dict.keys()):
             print("Vehicle :", vehicle_dict[vehicle_key]["Name"])
             sim_log[str(sim_count)] = simulation(client,camera_vehicle,vehicle_dict[vehicle_key],
-                                         camera_angle,save_path / vehicle_dict[vehicle_key]["Name"] / "{:02d}".format(sim_count),False,sim_count)
+                                         camera_angle,save_path / "data" / vehicle_dict[vehicle_key]["Name"] /
+                                         "{:02d}".format(sim_count),False,sim_count,current_level,timeoftheday_dict)
             client.reset() #else the balloon goes flying and generate collisions
             go_to_graveyard(client, vehicle_dict)#{1:vehicle_dict[other_vehicle]})
             sim_count += 1
+    client.simPause(True)
     json_object = json.dumps(sim_log, indent=4)
     with open(str(save_path / "sim_log.json"), "w") as outfile:
         outfile.write(json_object)
+    order_dataset(save_path,vehicle_dict)
+    generate_train_val_test(save_path / "ordered_data",(80,10,10))
+
+def copy_file(source_path: Path,destination_directory: Path,):
+    filename = source_path.name
+    shutil.copy(source_path, destination_directory / filename)
+    #time.sleep(0.3) #due to hard drive limitations this sleep makes the copy more fluid
+def convert_to_yolo_label(xmax,ymax,xmin,ymin,width,height):
+    center_x = (xmin + (xmax - xmin)/2) / width
+    center_y = (ymin + (ymax - ymin)/2) / height
+    height_bbx = (ymax - ymin) / height
+    width_bbx = (xmax - xmin) / width
+
+    return center_x, center_y, width_bbx, height_bbx
+
+def check_full(xmin,xmax,ymin,ymax,width,height):
+    if xmin == 0 or xmax == width or ymin== 0 or ymax == height:
+        return False
+    else:
+        return True
+
+def order_dataset(save_path,vehicle_dict):
+    # Create new folders
+    new_ordered_path = save_path / "ordered_data"
+    if not new_ordered_path.exists():
+        new_ordered_path.mkdir()
+    list_vehicle = [vehicle_dict[key]["Name"] for key in vehicle_dict]
+    create_folders(new_ordered_path,list_vehicle)
+    if not (new_ordered_path / "background").exists():
+        (new_ordered_path / "background").mkdir()
+    # Load data
+    with open(save_path / 'sim_log.json') as json_file:
+        sim_log = json.load(json_file)
+    resolution_dict = sim_log['camera_details']
+    del sim_log['random_seed']
+    del sim_log['camera_details']
+    sim_log = {int(key): value for key, value in sim_log.items()}
+
+    
+    count_background=0
+    # Order
+    for sim_number in tqdm(sim_log.keys()):
+        vehicle = sim_log[sim_number]['other_vehicle']['Name']
+        current_path = save_path/ "data" / vehicle / "{:02d}".format(sim_number)
+        for frame_number, frame_data in tqdm(sim_log[sim_number]['frame_data'].items()):
+            list_frame = current_path.glob("{:02d}".format(sim_number) + '_' + "{:03d}".format(int(frame_number)) + '_*')
+            for frame in list_frame:
+                angle = frame.stem.replace("{:02d}".format(sim_number) + '_' + "{:03d}".format(int(frame_number)) + '_',"")
+                if angle in frame_data['label']:
+                    xmin = frame_data['label'][angle]["box2D"]["x_min"]
+                    xmax =frame_data['label'][angle]["box2D"]["x_max"]
+                    ymin = frame_data['label'][angle]["box2D"]["y_min"]
+                    ymax =frame_data['label'][angle]["box2D"]["y_max"]
+                    width = resolution_dict[angle]["resolution"][0]
+                    height = resolution_dict[angle]["resolution"][1]
+                    if check_full(xmin,xmax,ymin,ymax,width,height): #remove object not fully on the picture
+                        copy_file(frame,new_ordered_path / vehicle)
+                        x_center, y_center, width, height = convert_to_yolo_label(xmax,ymax,xmin,ymin,width,height)
+                        with open(new_ordered_path / vehicle / (frame.stem + '.txt'), 'w') as file:
+                        # remove label if photo is cropped ?
+                            file.write(sim_log[sim_number]['other_vehicle']['yolo_class'] +" "+
+                                   str(x_center) +" "+ str(y_center)+" "+
+                                   str(width)+ " "+str(height))
+                else:
+                    count_background +=1
+                    if count_background ==  19: #avoid copying all the files should be 3 per travel
+                        count_background = 0
+                        copy_file(frame, new_ordered_path / "background")
+
+
+def create_data_split_folder(folder_name, data_path,dict_class,index_interval):
+    save_path = data_path.parent / folder_name
+    if save_path.exists():
+        shutil.rmtree(save_path)
+    save_path.mkdir(parents=True)
+    (save_path / "images").mkdir()
+    (save_path / "labels").mkdir()
+    percentage_background = 5
+    divided_background = round((100 / len(list(dict_class.keys()))) / percentage_background)
+    reduced_background_counter = 0
+    for key in tqdm(dict_class.keys()):
+        for file in range(index_interval[0],index_interval[1]+1):
+            if key == "background": #no label for background
+                reduced_background_counter +=1
+                if reduced_background_counter == divided_background: #reduce the number of background compare to the rest
+                    reduced_background_counter=0
+                    copy_file(dict_class[key][file].with_suffix(".png"), save_path / "images")
+            else:
+                copy_file(dict_class[key][file].with_suffix(".txt"),save_path / "labels")
+                copy_file(dict_class[key][file].with_suffix(".png"), save_path / "images")
+
+
+def generate_train_val_test(data_path: Path,split: tuple):
+    if sum(split) != 100:
+        raise ValueError("Total of split data isn't equal to 100")
+    list_class_folder = data_path.iterdir()
+    dict_class = {}
+    minimum_per_class = 100000 #Not good
+    for folder in list_class_folder:
+
+        list_file = list(folder.iterdir())
+        list_file = list(set(path.parent / path.stem for path in list_file))
+        random.shuffle(list_file)
+        dict_class[folder.stem] = list_file
+        if len(list_file) < minimum_per_class :#and "background" not in str(folder):
+            minimum_per_class = len(list_file)
+    for key in dict_class.keys():
+        dict_class[key] = dict_class[key][:minimum_per_class]
+    train_interval = [0,round(minimum_per_class * split[0] / 100)-1]
+    val_interval = [round(minimum_per_class * split[0] / 100), round(minimum_per_class * split[0] / 100) + round(minimum_per_class * split[1] / 100)-1]
+    test_interval = [round(minimum_per_class * split[0] / 100) + round(minimum_per_class * split[1] / 100-1),minimum_per_class-1]
+    print("Number of label per vehicle :",minimum_per_class)
+
+    create_data_split_folder("val", data_path, dict_class, val_interval)
+    create_data_split_folder("train", data_path, dict_class, train_interval)
+    create_data_split_folder("test", data_path, dict_class, test_interval)
+
+
+
+
+
 
 
