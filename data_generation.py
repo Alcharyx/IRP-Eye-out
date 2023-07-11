@@ -11,6 +11,8 @@ import matplotlib.pyplot as plt
 import json
 import cv2
 import winsound
+from PIL import Image
+import itertools
 
 
 class travel:
@@ -30,7 +32,7 @@ class WeatherParameter:
     """
     Class with corresponding value for Airsim API
     """
-    Nothing = None
+    Nothing = -1
     Rain = 0
     # Roadwetness = 1
     Snow = 2
@@ -69,15 +71,23 @@ def save_img(client, frame, camera_angle, save_path, sim_count, camera_vehicle, 
     img_list = []
     for i in camera_angle:
         response = client.simGetImages([airsim.ImageRequest(i, airsim.ImageType.Scene, False, False)], "", False)
+        img1d = np.frombuffer(response[0].image_data_uint8, dtype=np.uint8)
+        img_rgb = img1d.reshape(response[0].height, response[0].width, 3)
+        gray_image = color.rgb2gray(img_rgb) * 255
+        while gray_image.shape == (0,0): #error lag -> empty image
+            time.sleep(1)
+            print("Bug empty img")
+            response = client.simGetImages([airsim.ImageRequest(i, airsim.ImageType.Scene, False, False)], "", False)
+            img1d = np.frombuffer(response[0].image_data_uint8, dtype=np.uint8)
+            img_rgb = img1d.reshape(response[0].height, response[0].width, 3)
+            gray_image = color.rgb2gray(img_rgb) * 255
+
         # print("img ", i)
-        img_list.append(response[0])
+        img_list.append(gray_image)
     label = checkbb_camera(client, camera_vehicle, camera_angle, vehicle_dict)
     if label:
         for i in range(len(camera_angle)):
             # print("save img ", camera_angle[i])
-            img1d = np.frombuffer(img_list[i].image_data_uint8, dtype=np.uint8)
-            img_rgb = img1d.reshape(img_list[i].height, img_list[i].width, 3)
-            gray_image = color.rgb2gray(img_rgb) * 255
             frame_path = str(save_path / (
                         "{:02d}".format(sim_count) + '_' + "{:03d}".format(frame) + '_' + camera_angle[i] + '.png '))
             cv2.imwrite(frame_path, gray_image)
@@ -327,7 +337,7 @@ def change_weather(client: airsim.MultirotorClient, weather_param: WeatherParame
     -------
 
     """
-    if weather_param is not None:
+    if weather_param !=-1:
         client.simEnableWeather(True)
         client.simSetWeatherParameter(weather_param, weather_val)
 
@@ -501,7 +511,7 @@ def setdetection(client, camera_vehicle, camera_angle, vehicle_dict, detection_r
         for key in vehicle_dict.keys():
             client.simAddDetectionFilterMeshName(cam_name, airsim.ImageType.Scene, vehicle_dict[key]["Mesh"] + "*",
                                                  camera_vehicle)
-
+    a=3
 
 def find_key_by_name(dictionary, name):
     """
@@ -545,7 +555,6 @@ def check_overlap(bounding_boxes):
                     box1["y_min"] <= box2["y_max"] and
                     box1["y_max"] >= box2["y_min"]
             ):
-                print("Box overlapping")
                 return True
     return False
 
@@ -581,14 +590,15 @@ def checkbb_camera(client, camera_vehicle, camera_angle,
                                                 info.relative_pose.position.y_val,
                                                 info.relative_pose.position.z_val])
             vehicle_key = find_key_by_name(vehicle_dict, info.name)
-            if distance >= vehicle_dict[vehicle_key]["Max_dist_m"]:
-                continue
+            #if distance >= vehicle_dict[vehicle_key]["Max_dist_m"]: #and distance <= vehicle_dict[vehicle_key]["Min_dist_m"]: #good for 1 vehicle
+            #    continue
             label[i + "_" + info.name] = {"name": info.name,
                                           "yolo_class": vehicle_dict[vehicle_key]["yolo_class"],
                                           "box2D": {"x_max": info.box2D.max.x_val,
                                                     "y_max": info.box2D.max.y_val,
                                                     "x_min": info.box2D.min.x_val,
-                                                    "y_min": info.box2D.min.y_val}}
+                                                    "y_min": info.box2D.min.y_val},
+                                          "distance": distance}
         if len(info_list) > 1:
             on_same_picture_list = {key: value for key, value in label.items() if key.startswith(i)}
             bbx_on_same_picture = []
@@ -630,25 +640,21 @@ def get_frame_data(client, camera_vehicle, bbx_dict, timeoftheday, current_level
                   [v1_data.kinematics_estimated.orientation.x_val,
                    v1_data.kinematics_estimated.orientation.y_val,
                    v1_data.kinematics_estimated.orientation.z_val]}
-    v1_yaw = v1_data.kinematics_estimated.orientation.z_val
     result = {"currentlevel": current_level, "timeoftheday": timeoftheday, camera_vehicle: v1_log}
     name_list = [(details[1]["name"], details[0]) for details in bbx_dict.items()]
     for name in name_list:
         v2_data = client.getMultirotorState(vehicle_name=name[0])
-        v2_yaw = v2_data.kinematics_estimated.orientation.z_val
         v2_log = {"coordinate": [v2_data.kinematics_estimated.position.x_val,
                                  v2_data.kinematics_estimated.position.y_val,
                                  v2_data.kinematics_estimated.position.z_val],
                   "orientation": [v2_data.kinematics_estimated.orientation.x_val,
                                   v2_data.kinematics_estimated.orientation.y_val,
                                   v2_data.kinematics_estimated.orientation.z_val]}
-
-        v2_log["distance"] = get_distance(v1_log["coordinate"], v2_log["coordinate"]),
-        v2_log["angle"] = np.degrees(v2_yaw - v1_yaw)  # positive diff angle = clockwise
         v2_log["label"] = bbx_dict[name[1]]
         result[name[1]] = v2_log
 
     return result
+
 
 
 def add_to_count(count_dict, bbx_dict):
@@ -666,8 +672,9 @@ def add_to_count(count_dict, bbx_dict):
 
     """
     for key, value in bbx_dict.items():
-        class_found = value["yolo_class"]
-        count_dict[class_found] += 1
+        class_found = value["yolo_class"] + "_" + value["name"]
+        count_dict["individual"][class_found] += 1
+        count_dict["group"][value["yolo_class"]] += 1
 
 
 def simulation(client, camera_vehicle, vehicle_dict, camera_angle, save_path: Path, plot, sim_count, current_level,
@@ -704,7 +711,7 @@ def simulation(client, camera_vehicle, vehicle_dict, camera_angle, save_path: Pa
     """
 
     save_path.mkdir(exist_ok=True)
-    cam_altitude = random.randint(-700, -400)
+    cam_altitude = random.randint(-800, -500)
 
     speed = 25
     frame_data = {}
@@ -713,7 +720,7 @@ def simulation(client, camera_vehicle, vehicle_dict, camera_angle, save_path: Pa
                   center_data.kinematics_estimated.position.y_val,
                   cam_altitude)
 
-    cam_radius = 1000
+    cam_radius = 2000
     list_travel = []
     cam_travel = generate_travel(center_cam, cam_radius, speed)
     for vehicle in vehicle_dict.keys():
@@ -725,7 +732,7 @@ def simulation(client, camera_vehicle, vehicle_dict, camera_angle, save_path: Pa
         radius = random.randint(round(max_dist * 0.9), round(max_dist * 1.1))
         list_travel.append(generate_travel(center_other, radius, speed))
 
-    estimate_trajectory(center_cam, cam_radius, cam_travel, list_travel, plot, save_path, sim_count)
+    #estimate_trajectory(center_cam, cam_radius, cam_travel, list_travel, plot, save_path, sim_count)
     # plot in 3D with height diff
     # set weather
     weather = random.choice([WeatherParameter.Nothing, WeatherParameter.Nothing, WeatherParameter.Rain,
@@ -744,7 +751,7 @@ def simulation(client, camera_vehicle, vehicle_dict, camera_angle, save_path: Pa
     other_arrived = False
     cam_arrived = False
     pic_count = 1
-    pic_delay = 2  # second now but change to fps next
+    pic_delay = 8  # second now but change to fps next
     # set timeoftheday
     rand_time = random.choice(list(timeoftheday_dict.keys()))
     client.simSetTimeOfDay(True, timeoftheday_dict[rand_time], False, 1, 1000)  # sun not moving for a whole
@@ -772,9 +779,13 @@ def simulation(client, camera_vehicle, vehicle_dict, camera_angle, save_path: Pa
         client.simPause(True)
         bbx_dict = save_img(client, pic_count, camera_angle, save_path, sim_count, camera_vehicle, vehicle_dict)
         add_to_count(count_dict, bbx_dict)
+
         if bbx_dict:
+            if len(list(bbx_dict.keys())) < 6:
+                count_dict["anomaly"].append(str(save_path / ("{:02d}".format(sim_count) + '_' + "{:03d}".format(pic_count))))
             frame_data[str(pic_count)] = get_frame_data(client, camera_vehicle, bbx_dict, rand_time, current_level)
             pic_count += 1
+
         client.simPause(False)
         if pic_count >= 60:
             cam_arrived = True
@@ -803,7 +814,7 @@ def create_folders(save_path: Path, vehicle_list: list):
             create.mkdir()
 
 
-def initialize_level(client, vehicle_dict, camera_angle, camera_vehicle):
+def initialize_level(client, vehicle_dict, camera_angle, camera_vehicle,detection_radius_m):
     """
     Initialize the level by creating vehicle and setting up the detection range
     Parameters
@@ -823,7 +834,6 @@ def initialize_level(client, vehicle_dict, camera_angle, camera_vehicle):
     """
     # Create vehicles
     create_all_vehicles(client, vehicle_dict)
-    detection_radius_m = 1000
     setdetection(client, camera_vehicle, camera_angle, vehicle_dict, detection_radius_m)
 
 
@@ -859,7 +869,7 @@ def change_level(current_sim, sim_num, level_list):
 
 
 def dataset_generation(save_path: Path, vehicle_dict: dict, vehicle_used, sim_iteration, camera_angle: list, level_list,
-                       timeoftheday_dict):
+                       timeoftheday_dict, distance_interval):
     """
     Main function handling data generation, ordering data, split into train/test/val for YOLOv8 usage
     Be aware that you might need to manually change level on unreal engine if needed
@@ -884,6 +894,9 @@ def dataset_generation(save_path: Path, vehicle_dict: dict, vehicle_used, sim_it
         List of level name
     timeoftheday_dict, dict :
         Dict containing different time of the day, ex :{"time1":"2023-06-15 11:15:00"}
+    distance_interval, list:
+        Interval that changes the Max_dist_m and Min_dist_m in dict_vehicle if the current value is outside of the
+        interval
 
     Returns Nothing
     -------
@@ -895,15 +908,25 @@ def dataset_generation(save_path: Path, vehicle_dict: dict, vehicle_used, sim_it
     random.seed(seed_value)
 
     # Create save folder if doesn't exist
-    if not (save_path / "data").exists():
-        (save_path / "data").mkdir()
+    if (save_path / "data").exists():
+        shutil.rmtree(save_path / "data")
+    (save_path / "data").mkdir()
     # create_folders(save_path / "data",vehicle_used)
 
     vehicle_dict = {k: v for k, v in vehicle_dict.items() if any(value in vehicle_used for value in v.values())}
-
-    count_dict = {}
     for key in vehicle_dict.keys():
-        count_dict[vehicle_dict[key]["yolo_class"]] = 0
+        if vehicle_dict[key]["Min_dist_m"] < distance_interval[0]:
+            vehicle_dict[key]["Min_dist_m"] = distance_interval[0]
+
+        if vehicle_dict[key]["Max_dist_m"] > distance_interval[1]:
+            vehicle_dict[key]["Max_dist_m"] = distance_interval[1]
+
+    count_dict = {"individual":{},
+                  "group":{},
+                  "anomaly": []}
+    for key in vehicle_dict.keys():
+        count_dict["individual"][vehicle_dict[key]["yolo_class"] + "_" + vehicle_dict[key]["Name"]] = 0
+        count_dict["group"][vehicle_dict[key]["yolo_class"]] = 0
 
     # Create client
     client = airsim.MultirotorClient()
@@ -938,7 +961,7 @@ def dataset_generation(save_path: Path, vehicle_dict: dict, vehicle_used, sim_it
             client = airsim.MultirotorClient()
             client.confirmConnection()
             client.enableApiControl(True)
-            initialize_level(client, vehicle_dict, camera_angle, camera_vehicle)
+            initialize_level(client, vehicle_dict, camera_angle, camera_vehicle,distance_interval[1])
             level_idx += 1
 
         sim_log[str(sim_count)] = simulation(client, camera_vehicle, vehicle_dict,
@@ -952,8 +975,7 @@ def dataset_generation(save_path: Path, vehicle_dict: dict, vehicle_used, sim_it
     json_object = json.dumps(sim_log, indent=4)
     with open(str(save_path / "sim_log.json"), "w") as outfile:
         outfile.write(json_object)
-    order_dataset(save_path, vehicle_dict)
-    generate_train_val_test(save_path / "ordered_data", (80, 10, 10))
+
 
 
 def copy_file(source_path: Path, destination_directory: Path, ):
@@ -1022,8 +1044,16 @@ def check_full(xmin, xmax, ymin, ymax, width, height):
     else:
         return True
 
+def remove_from_right(string, character):
+    index = string.rfind(character)
+    if index != -1:
+        return string[:index]
+    else:
+        return string
 
-def order_dataset(save_path, vehicle_dict):
+
+
+def order_dataset(save_path, distance_interval):
     """
     Take the raw data and generate a folder for background and a folder for images & creating label .txt file for YOLOv8
     Parameters
@@ -1038,14 +1068,10 @@ def order_dataset(save_path, vehicle_dict):
 
     """
     # Create new folders
-
-    new_ordered_path = save_path / "ordered_data"
+    new_ordered_path = save_path / ("ordered_data_" + str(distance_interval))
     if new_ordered_path.exists():
         shutil.rmtree(new_ordered_path)
     new_ordered_path.mkdir()
-
-    list_vehicle = [vehicle_dict[key]["Name"] for key in vehicle_dict]
-
     if not (new_ordered_path / "img").exists():
         (new_ordered_path / "img").mkdir()
 
@@ -1055,7 +1081,6 @@ def order_dataset(save_path, vehicle_dict):
     with open(save_path / 'sim_log.json') as json_file:
         sim_log = json.load(json_file)
     resolution_dict = sim_log['camera_details']
-    class_count = sim_log["classes_count"]
     del sim_log['random_seed']
     del sim_log['camera_details']
     del sim_log['classes_count']
@@ -1064,78 +1089,102 @@ def order_dataset(save_path, vehicle_dict):
     count_background = 0
     # Order
     for sim_number in tqdm(sim_log.keys()):
-        for frame_number, frame_data in tqdm(sim_log[sim_number]['frame_data'].items()):
+        for frame_number, frame_data in sim_log[sim_number]['frame_data'].items():
 
             list_img_frame = list((save_path / "data" / "{:02d}".format(sim_number)).glob(
                 "{:02d}".format(sim_number) + '_' + "{:03d}".format(int(frame_number)) + '_*'))
-            list_vehicle_key = list(frame_data.keys())[3:]
-            for key in list_vehicle_key:
-                vehicle_frame_data = frame_data[key]
-                for frame in list_img_frame:
-                    angle = key.split("_")[0]
-                    if angle in str(frame):
-                        xmin = vehicle_frame_data['label']["box2D"]["x_min"]
-                        xmax = vehicle_frame_data['label']["box2D"]["x_max"]
-                        ymin = vehicle_frame_data['label']["box2D"]["y_min"]
-                        ymax = vehicle_frame_data['label']["box2D"]["y_max"]
-                        width = resolution_dict[angle]["resolution"][0]
-                        height = resolution_dict[angle]["resolution"][1]
-                        if check_full(xmin, xmax, ymin, ymax, width, height):  # remove object not fully on the picture
-                            copy_file(frame, new_ordered_path / "img")
-                            x_center, y_center, width, height = convert_to_yolo_label(xmax, ymax, xmin, ymin, width,
-                                                                                      height)
-                            with open(new_ordered_path / "img" / (frame.stem + '.txt'), 'a') as file:
-                                # remove label if photo is cropped ?
-                                file.write(vehicle_frame_data['label']['yolo_class'] + " " +
-                                           str(x_center) + " " + str(y_center) + " " +
-                                           str(width) + " " + str(height) + "\n")
-                    else:
-                        count_background += 1
-                        if count_background == 3:  # avoid copying all the files
-                            count_background = 0
-                            copy_file(frame, new_ordered_path / "background")
+            angle_list = []
+            suffix_list = []
+            for i in range(len(list_img_frame)):
+                suffix_list.append(list_img_frame[i].suffix)
+                angle_list.append(list_img_frame[i].stem.split("_")[2])
+                list_img_frame[i] = list_img_frame[i].parent / remove_from_right(list_img_frame[i].stem,"_")
+            #counter_label = 0
+            for index_angle in range(len(angle_list)):
+                angle = angle_list[index_angle]
+                key_to_verify = []
+                for key in list(frame_data.keys())[3:]:
+                    on_angle = key.split("_")[0]
+                    if on_angle == angle:
+                        key_to_verify.append(key)
+                flag_to_save = True
+                if not key_to_verify:
+                    count_background += 1
+                    if count_background == 3:  # avoid copying all the files
+                        count_background = 0
+                        copy_file(list_img_frame[index_angle].with_name(list_img_frame[index_angle].name + "_" + angle + suffix_list[index_angle]),
+                                  new_ordered_path / "background")
+                    continue
+                label_to_save = {}
+                counter_label = 0
+                for key in key_to_verify:
+
+                    xmin = frame_data[key]['label']["box2D"]["x_min"]
+                    xmax = frame_data[key]['label']["box2D"]["x_max"]
+                    ymin = frame_data[key]['label']["box2D"]["y_min"]
+                    ymax = frame_data[key]['label']["box2D"]["y_max"]
+                    width = resolution_dict[angle]["resolution"][0]
+                    height = resolution_dict[angle]["resolution"][1]
+                    distance = frame_data[key]['label']["distance"]
+                    if not check_full(xmin, xmax, ymin, ymax, width, height) or distance < distance_interval[0] or distance > distance_interval[1]: # remove object not fully on the picture
+                        flag_to_save = False
+                        continue
+                    x_center, y_center, width, height = convert_to_yolo_label(xmax, ymax, xmin, ymin, width,
+                                                                              height)
+                    label_to_save[counter_label] = frame_data[key]['label']['yolo_class'] +\
+                                                   " " + str(x_center) + \
+                                                   " " + str(y_center) + \
+                                                   " " + str(width) + \
+                                                   " " + str(height) + "\n"
+                    counter_label += 1
+                if flag_to_save:
+                    copy_file(list_img_frame[index_angle].with_name(
+                        list_img_frame[index_angle].name + "_" + angle + suffix_list[index_angle]),
+                              new_ordered_path / "img")
+                    for key in range(len(label_to_save.keys())):
+                        with open(new_ordered_path / "img" / (list_img_frame[index_angle].name + "_" + angle + '.txt'), 'a') as file:
+                            file.write(label_to_save[key])
 
 
-def create_data_split_folder(folder_name, data_path, dict_class, index_interval):
+
+def create_data_split_folder(folder_path, list_file):
     """
-    Create a data folder with images and label depending on the input with the goal of a balanced dataset
+    Create a data folder with images and label depending on the input
     Parameters
     ----------
-    folder_name, str :
+    folder_path, str :
         Name of the folder
-    data_path, Path :
-        Path of the ordered folder data
-    dict_class, dict :
-        Dictionary with all the images per class
-    index_interval, list :
-        List of the beginning and ending index for the data in
+    list_file, list[Path] :
+        List of all the path to save in the folder
 
     Returns Nothing
     -------
 
     """
-    save_path = data_path.parent / folder_name
-    if save_path.exists():
-        shutil.rmtree(save_path)
-    save_path.mkdir(parents=True)
-    (save_path / "images").mkdir()
-    (save_path / "labels").mkdir()
-    percentage_background = 5
-    divided_background = round((100 / len(list(dict_class.keys()))) / percentage_background)
-    reduced_background_counter = divided_background - 1
-    for key in tqdm(dict_class.keys()):
-        for file in range(index_interval[0], index_interval[1] + 1):
-            if key == "background":  # no label for background
-                reduced_background_counter += 1
-                if reduced_background_counter == divided_background:  # reduce the number of background compare to the rest
-                    reduced_background_counter = 0
-                    copy_file(dict_class[key][file].with_suffix(".png"), save_path / "images")
-            else:
-                copy_file(dict_class[key][file].with_suffix(".txt"), save_path / "labels")
-                copy_file(dict_class[key][file].with_suffix(".png"), save_path / "images")
+    if folder_path.exists():
+        shutil.rmtree(folder_path)
+    folder_path.mkdir(parents=True)
+    (folder_path / "images").mkdir()
+    (folder_path / "labels").mkdir()
+
+    for file in tqdm(list_file):
+        if file.suffix == ".txt":
+            copy_file(file, folder_path / "labels")
+        else:
+            copy_file(file,folder_path / "images")
 
 
-def generate_train_val_test(data_path: Path, split: tuple):
+
+def generate_combinations(list):
+    combinations = []
+    for index in range(1, len(list) + 1):
+        for combination in itertools.combinations(list, index):
+            fused_combination = '_'.join(elem.split("_")[0] for elem in combination)
+            combinations.append(fused_combination)
+    return combinations
+
+
+def generate_train_val_test(data_path: Path, split: tuple, name: str,rand_seed):
     """
     Function to generate train / val / test from the ordered data
     Parameters
@@ -1149,47 +1198,341 @@ def generate_train_val_test(data_path: Path, split: tuple):
     -------
 
     """
+    random.seed(rand_seed)
     if sum(split) != 100:
         raise ValueError("Total of split data isn't equal to 100")
-    list_class_folder = data_path.iterdir()
-    dict_class = {}
+    list_folder = data_path.iterdir()
+    dict_split = {"train": [],
+                  "val": [],
+                  "test": []}
 
     with open(data_path.parent / 'sim_log.json') as json_file:
         sim_log = json.load(json_file)
-    minimum_per_class = min(sim_log["classes_count"].values())
-    print(sim_log["classes_count"])
-    for key in sim_log["classes_count"].keys():
-        dict_class[key] = []
+    maximum_per_class = min(sim_log["classes_count"]["group"].values())
+    dict_number_vehicle_per_class ={}
+    for i in sim_log["classes_count"]["group"].keys():
+        dict_number_vehicle_per_class[i] = 0
+        for key in sim_log["classes_count"]["individual"].keys():
+            if i == key.split("_")[0]:
+                dict_number_vehicle_per_class[i] += 1
 
-    # create list for each set
-    for folder in list_class_folder:
+    #print(sim_log["classes_count"])
+    percent_background = 5
+    background_files = []
+    dict_class = {}
+    for i in generate_combinations(sorted(list(sim_log["classes_count"]["individual"].keys()),reverse=True)):
+        dict_class[i] = 0
+        dict_class["path_" + i] = []
+    for folder in list_folder:
+        if folder.stem == "background":
+            background_files = list(folder.iterdir())
+            random.shuffle(background_files)
+            continue #manage background after to add 5% of it
         list_file = list(folder.iterdir())
-        list_file = list(set(path.parent / path.stem for path in list_file))
+        list_file = [string for string in list_file if ".txt" not in str(string)]
         random.shuffle(list_file)
-        dict_class[folder.stem] = list_file
+        for img_file in list_file:
+            with open(str(img_file.with_suffix(".txt"))) as txt_file: #check if exist else error
+                lines = txt_file.readlines()
+                txt_class_list = []
+                for line in lines:
+                    txt_class_list.append(line[0])
+                txt_class_list = sorted(txt_class_list,reverse=True)
+                key = '_'.join(str(elem) for elem in txt_class_list)
+                dict_class["path_"+key].append(img_file)
+                dict_class[key] += 1
+    excess_dict = {}
+    for key in sim_log["classes_count"]["group"]:
+        excess_dict[key] = sim_log["classes_count"]["group"][key] - maximum_per_class
+    stuck_counter = 0
+    while sum(excess_dict.values()) > 0:
+        virtual_dict = {}
+        key_to_eliminate = ""
+        for key in excess_dict.keys():
+            virtual_excess = excess_dict[key]
+            if excess_dict[key] > 0:
+                while key_to_eliminate.count(key) < dict_number_vehicle_per_class[key] and virtual_excess!=0:
+                    key_to_eliminate = key_to_eliminate + key + "_"
+                    virtual_excess -= 1
+            virtual_dict[key] = virtual_excess
 
-    for img in dict_class['img']:
-        with open(str(img) + '.txt') as txt_file:
+        stuck_counter += 1
+        if stuck_counter >= 30:
+            excess_dict = virtual_dict
+            print("bad balance")
+        while key_to_eliminate != "":
+            if len(dict_class["path_"+key_to_eliminate[:-1]]) > 3:  #to keep one sample of each type could be increased
+                key_to_eliminate = key_to_eliminate[:-1]
+                del dict_class["path_"+ key_to_eliminate][0]
+                dict_class[key_to_eliminate] -=1
+                excess_dict = virtual_dict
+                key_to_eliminate =""
+            else:
+                index_to_eliminate = random.choice(np.linspace(0,len(key_to_eliminate)-2,(len(key_to_eliminate))//2))
+                key_to_eliminate = remove_characters_by_indices(key_to_eliminate,[int(index_to_eliminate),int(index_to_eliminate)+1])
+
+
+    for key in [key for key in dict_class.keys() if "path" not in key]:
+        amount_test = round(dict_class[key] * split[2]/100)
+        amount_val = round(dict_class[key] * split[1]/100)
+        amount_train = dict_class[key] - amount_val - amount_test
+        for i in range(amount_test):
+            current_file = dict_class["path_"+key].pop(0)
+            dict_split["test"].append(current_file)
+            dict_split["test"].append(current_file.with_suffix(".txt"))
+        for i in range(amount_test):
+            current_file = dict_class["path_" + key].pop(0)
+            dict_split["val"].append(current_file)
+            dict_split["val"].append(current_file.with_suffix(".txt"))
+        for i in range(amount_train):
+            current_file = dict_class["path_" + key].pop(0)
+            dict_split["train"].append(current_file)
+            dict_split["train"].append(current_file.with_suffix(".txt"))
+
+    if background_files:
+        for key in dict_split.keys():
+            number_background = math.ceil(len(dict_split[key]) * percent_background / 100)
+            for i in range(number_background):
+                dict_split[key].append(background_files.pop(0))
+            random.shuffle(dict_split[key])
+
+    create_data_split_folder(data_path.parent / ("val" + name), dict_split["val"])
+    create_data_split_folder(data_path.parent / ("test" + name), dict_split["test"])
+    create_data_split_folder(data_path.parent / ("train" + name), dict_split["train"])
+
+def remove_characters_by_indices(string, indices):
+    new_string = ""
+    for i in range(len(string)):
+        if i not in indices:
+            new_string += string[i]
+    return new_string
+
+def good_split_slice(number):
+    """
+    Split a number into the highest decomposition where a x b = number
+    Parameters
+    ----------
+    number, int :
+        Number you want to split in 2
+
+    Returns a,b, int :
+        highest decompostion number
+    -------
+
+    """
+    if number == 1:
+        return 1,1
+    a = int(number ** 0.5)
+    while a > 0:
+        if number % a == 0:
+            b = number // a
+            if a == 1:
+                raise ValueError("The number of slice cannot be divided properly change the number of slice")
+            else:
+                return a, b
+        a -= 1
+
+def is_label_on_image(width_pixels,height_pixels,label_dict,slice_number):
+    """
+    Check if the bounding box is on the slice of the image
+    Parameters
+    ----------
+    width_pixels, list :
+        Interval of pixel on x axis for the image
+    height_pixels, list :
+        Interval of pixel on y axis for the image
+    label_dict, dict :
+        Dictionary containing the label bounding box pixel coordinate
+    slice_number, list :
+        Contain the slice number [row, column]
+
+    Returns result, list :
+        Flag if the slice is usable or not Dictionary with the new coordinate for the label of the slice
+    -------
+
+    """
+    result = {str(slice_number) : {"State": True}}
+    dict_in = {}
+    to_del = []
+    flag = False
+    for key in label_dict.keys():
+        xcenter, ycenter, xsize, ysize = label_dict[key]
+        bb_xmin = xcenter - xsize/2
+        bb_ymin = ycenter - ysize/2
+        bb_xmax = xcenter + xsize/2
+        bb_ymax = ycenter + ysize/2
+        if (bb_xmin > width_pixels[0] and bb_xmax < width_pixels[1]
+            and bb_ymin > height_pixels[0] and bb_ymax < height_pixels[1]):
+                dict_in[key] = "Inside"
+        elif ((bb_xmin < width_pixels[0] and bb_xmax < width_pixels[0]) or
+              (bb_xmin > width_pixels[1] and bb_xmax > width_pixels[1]) or
+              (bb_ymin < height_pixels[0] and bb_ymax < height_pixels[0]) or
+              (bb_ymin > height_pixels[1] and bb_ymax > height_pixels[1])):
+                dict_in[key] = "Outside"
+                #Outside
+        else:
+            dict_in[key] = "Partial"
+            result[str(slice_number)]["State"] = False
+            #print("Partial")
+            #Partial
+    for key in dict_in.keys():
+        if dict_in[key] == "Inside":
+            result[str(slice_number)][key] = new_coordinates(width_pixels, height_pixels, label_dict[key])
+            to_del.append(key)
+    #for i in to_del:
+    #    del label_dict[i]
+    return result
+
+def new_coordinates(width_pixels,height_pixels,original_label):
+    width = width_pixels[1] - width_pixels[0]
+    height = height_pixels[1] - height_pixels[0]
+    original_label[0] -= width_pixels[0]
+    original_label[1] -= height_pixels[0]
+    return convert_to_yolo_label(original_label[0] + original_label[2]/2,original_label[1] + original_label[3]/2,
+                                 original_label[0] - original_label[2]/2,original_label[1] - original_label[3]/2,
+                                 width,height)
+
+def order_slice_data(order_path,number_of_slice, overlap,distance_interval):
+
+    save_path = order_path.parent / ("ordered_slice_data_" + str(distance_interval))
+    if save_path.exists():
+        shutil.rmtree(save_path)
+    save_path.mkdir()
+
+    for folder in order_path.iterdir():
+        (save_path / folder.stem).mkdir()
+        for img in tqdm(list(folder.iterdir())):
+            if img.suffix == ".txt":
+                continue
+            slice_img(img,save_path / folder.stem, number_of_slice, overlap)
+
+
+def slice_img(img_path, save_path, number_of_slice, overlap):
+    """
+    Slice a Grayscale image into a number of slices with a defined overlap
+    Parameters
+    ----------
+    img_path, Path :
+        Path of the image to be sliced
+    number_of_slice, int :
+        Total number of slices for the image
+    overlap, float :
+        Value of the overlap between slices 20% = 0.2
+
+    Returns slices, list :
+        List of all the sliced images
+    -------
+
+    """
+
+    image = Image.open(str(img_path))
+    image_array = np.array(image)
+    height, width = image_array.shape
+    num_width, num_height = good_split_slice(number_of_slice)
+    slice_width = width // num_width
+    slice_height = height // num_height
+    overlap_width = round(slice_width * overlap)
+    overlap_height = round(slice_height * overlap)
+    slices = []
+    label_dict= {}
+    flag_background = True
+    if (img_path.parent / (img_path.stem + ".txt")).exists():
+        flag_background = False
+        with open(img_path.parent / (img_path.stem + ".txt")) as txt_file:
             lines = txt_file.readlines()
-            txt_class_list = []
+            counter = 1
             for line in lines:
-                txt_class = line.strip(" ")[0]
-                txt_class_list.append(txt_class)
-        dict_class[random.choice(txt_class_list)].append(img)
+                line_data = line.strip("\n").split(" ")
+                line_data = [float(data) for data in line_data]
+                label_dict[str(int(line_data[0]))+"_"+str(counter)] = [round(line_data[1] * width),
+                                                 round(line_data[2] * height),
+                                                 math.ceil(line_data[3] * width),
+                                                 math.ceil(line_data[4] * height)]
+                counter += 1
+    new_coordinates = {}
+    for i in range(num_height):
+        start_height = i * (slice_height - round(overlap_height/2))
+        end_height = start_height + slice_height + round(overlap_height/2)
+        if end_height > height:
+            diff = end_height - height
+            end_height = height
+            start_height-= diff #to keep the slice of same size
+        for j in range(num_width):
+            start_width = j * (slice_width - round(overlap_width/2))
+            end_width = start_width + slice_width + round(overlap_width/2)
+            if end_width > width:
+                diff = end_width - width
+                end_width = width
+                start_width -= diff
 
-    for key, value in dict_class.items():
-        if len(value) < minimum_per_class:
-            minimum_per_class = len(value)
+            slice_img = image_array[start_height:end_height, start_width:end_width]
+            if flag_background:
+                slices.append(slice_img)
+            else:
+                new_coordinates.update(is_label_on_image([start_width,end_width],[start_height,end_height],label_dict,[i,j]))
+                #add slice if inside image
+                slices.append(slice_img)
+                img_slice = Image.fromarray(slice_img)
+                # save img
+                #img_slice.show()
+                # img_slice.save("slide"+str(i)+"_"+str(j)+".png")
+    if flag_background:
 
-    del dict_class["img"]
+        for column in range(num_width):
+            for row in range(num_height):
+                if random.choice([True,False]):
+                    img_slice = Image.fromarray(slices[column * num_width + row])
+                    img_slice.save(str(save_path / (img_path.stem + "_" + str(column) + "_" + str(row) + ".png")))
+                    #with open(save_path / (img_path.stem + "_" + str(column) + "_" + str(row)+ ".txt"), 'a') as file:
+                    #    file.write("")
+    else:
+        to_del = []
+        for key in new_coordinates.keys():
+            if new_coordinates[key]["State"] == False:
+                to_del.append(key)
+        for i in to_del:
+            del new_coordinates[i]
+        to_del = []
+        no_duplicate = False
+        while no_duplicate == False:
+            no_duplicate = remove_dupli_recu(new_coordinates)
 
-    train_interval = [0, round(minimum_per_class * split[0] / 100) - 1]
-    val_interval = [round(minimum_per_class * split[0] / 100),
-                    round(minimum_per_class * split[0] / 100) + round(minimum_per_class * split[1] / 100) - 1]
-    test_interval = [round(minimum_per_class * split[0] / 100) + round(minimum_per_class * split[1] / 100) - 1,
-                     minimum_per_class - 1]
-    print("Number of label per vehicle :", minimum_per_class)
+        for key in new_coordinates.keys():
+            column,row = [int(item.strip()) for item in key[1:-1].split(',')]
+            img_slice = Image.fromarray(slices[column * num_width + row])
 
-    create_data_split_folder("val", data_path, dict_class, val_interval)
-    create_data_split_folder("train", data_path, dict_class, train_interval)
-    create_data_split_folder("test", data_path, dict_class, test_interval)
+            if not list(new_coordinates[key].keys())[1:]:
+                if random.choice([True,False, False, False]):
+                    img_slice.save(str(save_path.parent / "background" / (img_path.stem + "_" + str(column) + "_" + str(row) + ".png")))
+                continue
+
+            img_slice.save(str(save_path / (img_path.stem + "_" + str(column) + "_" + str(row) + ".png")))
+            for label_key in list(new_coordinates[key].keys())[1:]:
+                with open(save_path / (img_path.stem + "_" + str(column) + "_" + str(row)+ ".txt"), 'a') as file:
+                    file.write(label_key.split("_")[0] + " " +
+                               str(new_coordinates[key][label_key][0]) + " " + str(new_coordinates[key][label_key][1]) + " " +
+                               str(new_coordinates[key][label_key][2]) + " " + str(new_coordinates[key][label_key][3]) + "\n")
+
+
+def remove_dupli_recu(new_coordinates):
+    to_del = []
+    for key_i in list(new_coordinates.keys()):
+        for key_j in list(new_coordinates.keys()):
+            if key_j == key_i:
+                continue
+            common_keys = set(new_coordinates[key_i].keys()).intersection(set(new_coordinates[key_j].keys()))
+            if len(common_keys) > 1:
+                if len(new_coordinates[key_i].keys()) > len(new_coordinates[key_j].keys()):
+                    to_del.append(key_j)
+                else:
+                    to_del.append(key_i)
+    max_len = -1
+    key_max_len = -1
+    if to_del:
+        for i in to_del:
+            if len(new_coordinates[i].keys()) >= max_len:
+                max_len = len(new_coordinates[i].keys())
+                key_max_len = i
+        del new_coordinates[key_max_len]
+        return False
+    return True
