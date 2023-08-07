@@ -1,0 +1,10 @@
+path: real_dataset3
+train: train/images
+val: val/images
+test: test/images
+
+# class names
+names:
+  0: 'airplane'
+  1: 'helicopter'
+  2: 'balloon'
