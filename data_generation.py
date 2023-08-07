@@ -1,3 +1,4 @@
+import copy
 import math
 import time
 from pathlib import Path
@@ -76,18 +77,14 @@ def save_img(client, frame, camera_angle, save_path, sim_count, camera_vehicle, 
         gray_image = color.rgb2gray(img_rgb) * 255
         while gray_image.shape == (0,0): #error lag -> empty image
             time.sleep(1)
-            #print("Bug empty img")
             response = client.simGetImages([airsim.ImageRequest(i, airsim.ImageType.Scene, False, False)], "", False)
             img1d = np.frombuffer(response[0].image_data_uint8, dtype=np.uint8)
             img_rgb = img1d.reshape(response[0].height, response[0].width, 3)
             gray_image = color.rgb2gray(img_rgb) * 255
-
-        # print("img ", i)
         img_list.append(gray_image)
     label = checkbb_camera(client, camera_vehicle, camera_angle, vehicle_dict)
     if label:
         for i in range(len(camera_angle)):
-            # print("save img ", camera_angle[i])
             frame_path = str(save_path / (
                         "{:02d}".format(sim_count) + '_' + "{:03d}".format(frame) + '_' + camera_angle[i] + '.png '))
             cv2.imwrite(frame_path, img_list[i])
@@ -138,7 +135,6 @@ def teleport(client, vehicle_name, coordinates, orientation=(0, 0, 0)):
                                             orientation[1],
                                             orientation[2]))
     client.simSetVehiclePose(pose, True, vehicle_name)
-    # client.moveToZAsync(coordinates[2], 10,vehicle_name=vehicle_name).join()
     # client.takeoffAsync(vehicle_name=vehicle_name).join()
     # client.hoverAsync(vehicle_name).join()
 
@@ -245,6 +241,7 @@ def estimate_trajectory(center, radius, cam_travel: travel, list_travel: list[tr
     -------
 
     """
+    #fixe arrow head size
     fig = plt.figure()
     ax = fig.add_subplot(111, projection='3d')
 
@@ -254,17 +251,13 @@ def estimate_trajectory(center, radius, cam_travel: travel, list_travel: list[tr
     y = center[1] + radius * np.sin(theta)
     z = min(cam_travel.end_coordinates[2], cam_travel.start_coordinates[2]) * np.ones_like(theta)
     ax.plot(x, y, z, color='green')
-
     ax.quiver(
         cam_travel.start_coordinates[0], cam_travel.start_coordinates[1], cam_travel.start_coordinates[2],
         cam_travel.end_coordinates[0] - cam_travel.start_coordinates[0],
         cam_travel.end_coordinates[1] - cam_travel.start_coordinates[1],
         cam_travel.end_coordinates[2] - cam_travel.start_coordinates[2],
         arrow_length_ratio=0.1, color='red')
-
-    # Travel2
     for travel2 in list_travel:
-        theta = np.linspace(0, 2 * np.pi, 100)
         ax.quiver(
             travel2.start_coordinates[0], travel2.start_coordinates[1], travel2.start_coordinates[2],
             travel2.end_coordinates[0] - travel2.start_coordinates[0],
@@ -372,7 +365,7 @@ def set_next_position(client, travel: travel, vehicle_name, time_delay, orientat
     if orientation == "end":
         yaw = np.arctan2(-(yf - y), xf - x)
         roll = 0
-        pitch = 0  # np.arctan2(-(zf-z), np.linalg.norm(distance_left))
+        pitch = 0
     elif orientation == "random":
         yaw = np.radians(random.randint(0, 360))
         roll = 0
@@ -418,7 +411,7 @@ def create_all_vehicles(client, vehicle_dict):
     go_to_graveyard(client, vehicle_dict)
 
 
-def go_to_graveyard(client, vehicle_dict):  # graveyard slot to vehicle dict ?
+def go_to_graveyard(client, vehicle_dict):
     """
     Teleport all the vehicle in the vehicle dict into the "graveyard" (far under the ground) using Airsim API,
     vehicle are teleported at different coordinate to avoid unnecessary collision
@@ -433,6 +426,7 @@ def go_to_graveyard(client, vehicle_dict):  # graveyard slot to vehicle dict ?
     -------
 
     """
+    #sometimes balloon flies from graveyard  generating collison with ground
     graveyard_coord = [0, 0, 250]
     time.sleep(1)  # if not the balloon get stuck in the air
     for i in vehicle_dict.keys():
@@ -441,7 +435,6 @@ def go_to_graveyard(client, vehicle_dict):  # graveyard slot to vehicle dict ?
                                            graveyard_coord[2]))
         client.simSetVehiclePose(pose, True, vehicle_name=vehicle_dict[i]["Name"])
         client.takeoffAsync(vehicle_dict[i]["Name"])
-        # client.moveToPositionAsync(graveyard_coord[0],graveyard_coord[1],graveyard_coord[2]-20,5)
         graveyard_coord[0] += 30
 
 
@@ -511,7 +504,6 @@ def setdetection(client, camera_vehicle, camera_angle, vehicle_dict, detection_r
         for key in vehicle_dict.keys():
             client.simAddDetectionFilterMeshName(cam_name, airsim.ImageType.Scene, vehicle_dict[key]["Mesh"] + "*",
                                                  camera_vehicle)
-    a=3
 
 def find_key_by_name(dictionary, name):
     """
@@ -592,9 +584,8 @@ def checkbb_camera(client, camera_vehicle, camera_angle,
                                                 info.relative_pose.position.y_val,
                                                 info.relative_pose.position.z_val])
             vehicle_key = find_key_by_name(vehicle_dict, info.name)
-            if distance >= vehicle_dict[vehicle_key]["Max_dist_m"]: #and distance <= vehicle_dict[vehicle_key]["Min_dist_m"]: #good for 1 vehicle
+            if distance >= vehicle_dict[vehicle_key]["Max_dist_m"] or distance <= vehicle_dict[vehicle_key]["Min_dist_m"]: #good for 1 vehicle
                 dont_save = True
-                print(info.name," is too far")
                 continue
             label[i + "_" + info.name] = {"name": info.name,
                                           "yolo_class": vehicle_dict[vehicle_key]["yolo_class"],
@@ -609,7 +600,6 @@ def checkbb_camera(client, camera_vehicle, camera_angle,
             for key in on_same_picture_list.keys():
                 bbx_on_same_picture.append(on_same_picture_list[key]["box2D"])
             if check_overlap(bbx_on_same_picture):
-                #print("overlap")
                 dont_save = True
     if dont_save:
         label ={}
@@ -655,12 +645,10 @@ def get_frame_data(client, camera_vehicle, bbx_dict, timeoftheday, current_level
                                  v2_data.kinematics_estimated.position.z_val],
                   "orientation": [v2_data.kinematics_estimated.orientation.x_val,
                                   v2_data.kinematics_estimated.orientation.y_val,
-                                  v2_data.kinematics_estimated.orientation.z_val]}
-        v2_log["label"] = bbx_dict[name[1]]
+                                  v2_data.kinematics_estimated.orientation.z_val], "label": bbx_dict[name[1]]}
         result[name[1]] = v2_log
 
     return result
-
 
 
 def add_to_count(count_dict, bbx_dict):
@@ -684,11 +672,12 @@ def add_to_count(count_dict, bbx_dict):
 
 
 def simulation(client, camera_vehicle, vehicle_dict, camera_angle, save_path: Path, plot, sim_count, current_level,
-               timeoftheday_dict, count_dict):  # maybe set other vehicle to a list
+               timeoftheday_dict, count_dict):
     """
     Function to run a whole simulation for each vehicle spawned with random parameters
     Parameters
     ----------
+
      client, MultirotorClient :
         Airsim multirotor client
     camera_vehicle, str :
@@ -705,8 +694,8 @@ def simulation(client, camera_vehicle, vehicle_dict, camera_angle, save_path: Pa
         Number of the current simulation
     current_level, str :
         Current level on the frame
-    timeoftheday, str :
-        Time of the day of the frame
+    timeoftheday_dict, dict :
+        Dict containing different time of the day, ex :{"time1":"2023-06-15 11:15:00"}
     count_dict, dict :
         Dictionary containing the count of all classes
 
@@ -718,7 +707,8 @@ def simulation(client, camera_vehicle, vehicle_dict, camera_angle, save_path: Pa
 
     save_path.mkdir(exist_ok=True)
     cam_altitude = random.randint(-800, -500)
-
+    if current_level == "LandscapeMap":
+        cam_altitude -= 400
     speed = 25
     frame_data = {}
     center_data = client.getMultirotorState(vehicle_name=camera_vehicle)
@@ -727,6 +717,7 @@ def simulation(client, camera_vehicle, vehicle_dict, camera_angle, save_path: Pa
                   cam_altitude)
 
     cam_radius = 1500 #hard coded not good
+
     list_travel = []
     cam_travel = generate_travel(center_cam, cam_radius, speed)
     for vehicle in vehicle_dict.keys():
@@ -734,19 +725,17 @@ def simulation(client, camera_vehicle, vehicle_dict, camera_angle, save_path: Pa
         center_other = (center_data.kinematics_estimated.position.x_val,
                         center_data.kinematics_estimated.position.y_val,
                         other_altitude)
-        radius_vehicle = vehicle_dict[vehicle]["Max_dist_m"] / 2
+        radius_vehicle = vehicle_dict[vehicle]["Max_dist_m"] /1.5
         radius = random.randint(round(radius_vehicle * 0.8), round(radius_vehicle * 1.3))
         list_travel.append(generate_travel(center_other, radius, speed))
 
-    #estimate_trajectory(center_cam, cam_radius, cam_travel, list_travel, plot, save_path, sim_count)
-    # plot in 3D with height diff
+    estimate_trajectory(center_cam, cam_radius, cam_travel, list_travel, plot, save_path, sim_count)
     # set weather
     weather = random.choice([WeatherParameter.Nothing, WeatherParameter.Nothing, WeatherParameter.Rain,
                              WeatherParameter.Snow])
-    weather_val = random.randint(20, 80) / 100
+    weather_val = random.randint(50, 100) / 100
     change_weather(client, weather, weather_val)
 
-    # print("wheather : ",weather," | intensity :",weather_val)
     # setup vehicle
     client.enableApiControl(True, vehicle_name=camera_vehicle)
     client.armDisarm(True, vehicle_name=camera_vehicle)
@@ -757,7 +746,7 @@ def simulation(client, camera_vehicle, vehicle_dict, camera_angle, save_path: Pa
     other_arrived = False
     cam_arrived = False
     pic_count = 1
-    pic_delay = 8  # second now but change to fps next
+    pic_delay = 8  # second now but change to fps next , hard coded not good
     # set timeoftheday
     rand_time = random.choice(list(timeoftheday_dict.keys()))
     client.simSetTimeOfDay(True, timeoftheday_dict[rand_time], False, 1, 1000)  # sun not moving for a whole
@@ -769,7 +758,6 @@ def simulation(client, camera_vehicle, vehicle_dict, camera_angle, save_path: Pa
     time.sleep(1)
     while other_arrived == False and cam_arrived == False:
         travel_counter = 0
-        # print(pic_count)
         # set time of the day
         rand_time = random.choice(list(timeoftheday_dict.keys()))
         client.simSetTimeOfDay(True, timeoftheday_dict[rand_time], False, 1,
@@ -779,6 +767,7 @@ def simulation(client, camera_vehicle, vehicle_dict, camera_angle, save_path: Pa
             flag_travel = set_next_position(client, list_travel[travel_counter], vehicle_dict[vehicle]["Name"],
                                             pic_delay, "random")
             if flag_travel == True:
+                print(vehicle," arrived")
                 other_arrived = True
             travel_counter += 1
         time.sleep(0.5)
@@ -788,7 +777,6 @@ def simulation(client, camera_vehicle, vehicle_dict, camera_angle, save_path: Pa
 
         if bbx_dict:
             if len(set([key.split("_")[1] for key in bbx_dict.keys()])) < len(vehicle_dict.keys()):
-                #print("anomaly frame :",pic_count)
                 count_dict["anomaly"].append(str(save_path / ("{:02d}".format(sim_count) + '_' + "{:03d}".format(pic_count))))
             add_to_count(count_dict, bbx_dict)
             frame_data[str(pic_count)] = get_frame_data(client, camera_vehicle, bbx_dict, rand_time, current_level)
@@ -835,12 +823,13 @@ def initialize_level(client, vehicle_dict, camera_angle, camera_vehicle,detectio
         List of each camera angle used
     camera_vehicle, str :
         Name of the camera vehicle
+    detection_radius_m, float :
+        Range of detection in meters
 
     Returns Nothing
     -------
 
     """
-    # Create vehicles
     create_all_vehicles(client, vehicle_dict)
     setdetection(client, camera_vehicle, camera_angle, vehicle_dict, detection_radius_m)
 
@@ -919,7 +908,6 @@ def dataset_generation(save_path: Path, vehicle_dict: dict, vehicle_used, sim_it
     if (save_path / "data").exists():
         shutil.rmtree(save_path / "data")
     (save_path / "data").mkdir()
-    # create_folders(save_path / "data",vehicle_used)
 
     vehicle_dict = {k: v for k, v in vehicle_dict.items() if any(value in vehicle_used for value in v.values())}
     for key in vehicle_dict.keys():
@@ -953,7 +941,7 @@ def dataset_generation(save_path: Path, vehicle_dict: dict, vehicle_used, sim_it
                             False)[0]
         dict_camera[angle] = {"resolution": [test_img.width, test_img.height]}
     sim_log["camera_details"] = dict_camera
-    sim_count = 1  # create count with index in for
+    sim_count = 1
     # Level Management
     level_idx = 0
     current_level = "StartLevel"
@@ -961,9 +949,9 @@ def dataset_generation(save_path: Path, vehicle_dict: dict, vehicle_used, sim_it
         if change_level(loop, sim_iteration, level_list):
             current_level = level_list[level_idx]
             time.sleep(2)  # time for engine to load everything
-            winsound.PlaySound("mixkit-elevator-tone-2863.wav.wav", winsound.SND_FILENAME)
+            #winsound.PlaySound("mixkit-elevator-tone-2863.wav.wav", winsound.SND_FILENAME) #sound alert
             input("Change level to " + current_level)
-            # client.simLoadLevel(current_level) #Loading Level API is fairly random change manually if needed
+            # client.simLoadLevel(current_level) #Loading Level API is fairly random changed to manual
             # time.sleep(20) #time for level to load
             # Create client
             client = airsim.MultirotorClient()
@@ -976,14 +964,13 @@ def dataset_generation(save_path: Path, vehicle_dict: dict, vehicle_used, sim_it
                                              camera_angle, save_path / "data" / "{:02d}".format(sim_count), False,
                                              sim_count, current_level, timeoftheday_dict, count_dict)
         client.reset()  # else the balloon goes flying and generate collisions
-        go_to_graveyard(client, vehicle_dict)  # {1:vehicle_dict[other_vehicle]})
+        go_to_graveyard(client, vehicle_dict)
         sim_count += 1
     client.simPause(True)
     sim_log["classes_count"] = count_dict
     json_object = json.dumps(sim_log, indent=4)
     with open(str(save_path / "sim_log.json"), "w") as outfile:
         outfile.write(json_object)
-
 
 
 def copy_file(source_path: Path, destination_directory: Path, ):
@@ -1002,7 +989,6 @@ def copy_file(source_path: Path, destination_directory: Path, ):
     """
     filename = source_path.name
     shutil.copy(source_path, destination_directory / filename)
-    # time.sleep(0.3) #due to hard drive limitations this sleep makes the copy more fluid
 
 
 def convert_to_yolo_label(xmax, ymax, xmin, ymin, width, height):
@@ -1052,13 +1038,13 @@ def check_full(xmin, xmax, ymin, ymax, width, height):
     else:
         return True
 
+
 def remove_from_right(string, character):
     index = string.rfind(character)
     if index != -1:
         return string[:index]
     else:
         return string
-
 
 
 def order_dataset(save_path, distance_interval):
@@ -1068,8 +1054,8 @@ def order_dataset(save_path, distance_interval):
     ----------
     save_path, Path :
         Path to save the new ordered data
-    vehicle_dict, dict :
-        Dictionary containing all the information needed per vehicle
+    distance_interval, list[float,float] :
+        List containing the smallest and largest distance value accepted
 
     Returns Nothing
     -------
@@ -1108,7 +1094,6 @@ def order_dataset(save_path, distance_interval):
                 suffix_list.append(list_img_frame[i].suffix)
                 angle_list.append(list_img_frame[i].stem.split("_")[2])
                 list_img_frame[i] = list_img_frame[i].parent / remove_from_right(list_img_frame[i].stem,"_")
-            #counter_label = 0
             for index_angle in range(len(angle_list)):
                 angle = angle_list[index_angle]
                 key_to_verify = []
@@ -1122,8 +1107,6 @@ def order_dataset(save_path, distance_interval):
                     if count_background == 3:  # avoid copying all the files
                         count_background = 0
                         result_dict["background"].append([str(list_img_frame[index_angle].with_name(list_img_frame[index_angle].name + "_" + angle + suffix_list[index_angle])),[]])
-                        #copy_file(list_img_frame[index_angle].with_name(list_img_frame[index_angle].name + "_" + angle + suffix_list[index_angle]),
-                        #          new_ordered_path / "background")
                     continue
                 label_to_save = {}
                 counter_label = 0
@@ -1155,19 +1138,14 @@ def order_dataset(save_path, distance_interval):
                                                    " " + str(height) + "\n"
                     counter_label += 1
                 if flag_to_save:
-                    #copy_file(list_img_frame[index_angle].with_name(
-                    #    list_img_frame[index_angle].name + "_" + angle + suffix_list[index_angle]),
-                    #          new_ordered_path / "img")
                     label =[]
                     for key in range(len(label_to_save.keys())):
                         temp_counter +=1
-                        #with open(new_ordered_path / "img" / (list_img_frame[index_angle].name + "_" + angle + '.txt'), 'a') as file:
-                        #    file.write(label_to_save[key])
                         label.append(label_to_save[key])
                     result_dict["img"].append([str(list_img_frame[index_angle].with_name(list_img_frame[index_angle].name + "_" + angle + suffix_list[index_angle])),
                                                label])
-    print(temp_counter)
-    print(temp_counter_miss)
+    print("Kept ",temp_counter)
+    print("Remove ",temp_counter_miss)
     json_object = json.dumps(result_dict, indent=4)
     with open(str(save_path / ("ordered_data_"+ str(distance_interval) +".json")), "w") as outfile:
         outfile.write(json_object)
@@ -1200,8 +1178,19 @@ def create_data_split_folder(folder_path, list_file):
             copy_file(file,folder_path / "images")
 
 
-
 def generate_combinations(list):
+    """
+
+    Parameters
+    ----------
+    list, list :
+        List of all the vehicules in the dataset
+
+    Returns :
+        list of all the possible combination for the element in the list ex : [1,1,2] -> [2,1,1_1,2_1,2_1_1]
+    -------
+
+    """
     combinations = []
     for index in range(1, len(list) + 1):
         for combination in itertools.combinations(list, index):
@@ -1215,10 +1204,14 @@ def generate_train_val_test(ordered_json_path: Path, split: tuple, name: str,ran
     Function to generate train / val / test from the ordered data
     Parameters
     ----------
-    data_path, Path :
-        Path of the ordered folder data
+    ordered_json_path, Path :
+        Path of the ordered json file
     split, list :
         List of the split for train / val / test, sum must be equal to 100
+    name, str :
+        Name of the split folder
+    rand_seed, int :
+        Seed value for reproducibility
 
     Returns
     -------
@@ -1239,17 +1232,14 @@ def generate_train_val_test(ordered_json_path: Path, split: tuple, name: str,ran
         shutil.rmtree(label_path)
     label_path.mkdir(parents=True)
 
-    with open(ordered_json_path.parent / 'sim_log.json') as json_file:
-        sim_log = json.load(json_file)
-    maximum_per_class = min(sim_log["classes_count"]["group"].values())
+    maximum_per_class = min(classes_count["group"].values())
     dict_number_vehicle_per_class ={}
-    for i in sim_log["classes_count"]["group"].keys():
+    for i in classes_count["group"].keys():
         dict_number_vehicle_per_class[i] = 0
-        for key in sim_log["classes_count"]["individual"].keys():
+        for key in classes_count["individual"].keys():
             if i == key.split("_")[0]:
                 dict_number_vehicle_per_class[i] += 1
 
-    #print(sim_log["classes_count"])
     percent_background = 5
     background_files = []
     dict_class = {}
@@ -1279,7 +1269,7 @@ def generate_train_val_test(ordered_json_path: Path, split: tuple, name: str,ran
             dict_class["path_"+key].append(img_path)
             dict_class[key] += 1
     excess_dict = {}
-    for key in classes_count["group"]:
+    for key in sorted(classes_count["group"].keys(),reverse=True):
         excess_dict[key] = classes_count["group"][key] - maximum_per_class
     stuck_counter = 0
     while sum(excess_dict.values()) > 0:
@@ -1296,7 +1286,7 @@ def generate_train_val_test(ordered_json_path: Path, split: tuple, name: str,ran
         stuck_counter += 1
         if stuck_counter >= 30: #in case it cannot find a possible classes combination to remove
             excess_dict = virtual_dict
-            print("bad balance")
+            #print("bad balance")
         while key_to_eliminate != "":
             if len(dict_class["path_"+key_to_eliminate[:-1]]) > 3:  #to keep one sample of each type could be increased
                 key_to_eliminate = key_to_eliminate[:-1]
@@ -1307,6 +1297,7 @@ def generate_train_val_test(ordered_json_path: Path, split: tuple, name: str,ran
             else:
                 index_to_eliminate = random.choice(np.linspace(0,len(key_to_eliminate)-2,(len(key_to_eliminate))//2))
                 key_to_eliminate = remove_characters_by_indices(key_to_eliminate,[int(index_to_eliminate),int(index_to_eliminate)+1])
+
 
 
     for key in [key for key in dict_class.keys() if "path" not in key]:
@@ -1340,12 +1331,26 @@ def generate_train_val_test(ordered_json_path: Path, split: tuple, name: str,ran
     create_data_split_folder(ordered_json_path.parent / ("test" + name), dict_split["test"])
     create_data_split_folder(ordered_json_path.parent / ("train" + name), dict_split["train"])
 
+
 def remove_characters_by_indices(string, indices):
+    """
+
+    Parameters
+    ----------
+    string, str :
+        key to eliminates
+    indices, int :
+        indices to look into to eliminate
+    Returns
+    -------
+
+    """
     new_string = ""
     for i in range(len(string)):
         if i not in indices:
             new_string += string[i]
     return new_string
+
 
 def good_split_slice(number):
     """
@@ -1371,6 +1376,7 @@ def good_split_slice(number):
             else:
                 return a, b
         a -= 1
+
 
 def is_label_on_image(width_pixels,height_pixels,label_dict,slice_number):
     """
@@ -1410,20 +1416,31 @@ def is_label_on_image(width_pixels,height_pixels,label_dict,slice_number):
               (bb_ymin > height_pixels[1] and bb_ymax > height_pixels[1])):
                 dict_in[key] = "Outside"
                 #Outside
-        else:
+        else: #partial not working but doesn't matter
             dict_in[key] = "Partial"
             result[str(slice_number)]["State"] = False
-            #print("Partial")
             #Partial
     for key in dict_in.keys():
         if dict_in[key] == "Inside":
-            result[str(slice_number)][key] = new_coordinates(width_pixels, height_pixels, label_dict[key])
+            copy_label_dict = copy.deepcopy(label_dict[key]) #if not change the value for next iterations in the calling function
+            result[str(slice_number)][key] = new_coordinates(width_pixels, height_pixels, copy_label_dict)
             to_del.append(key)
-    #for i in to_del:
-    #    del label_dict[i]
     return result
 
+
 def new_coordinates(width_pixels,height_pixels,original_label):
+    """
+    Generate yolo coordinates for new sliced image
+    Parameters
+    ----------
+    width_pixels
+    height_pixels
+    original_label
+
+    Returns
+    -------
+
+    """
     width = width_pixels[1] - width_pixels[0]
     height = height_pixels[1] - height_pixels[0]
     original_label[0] -= width_pixels[0]
@@ -1452,6 +1469,8 @@ def order_slice_data(order_path,number_of_slice, overlap,distance_interval):
         slice_ordered_dict[key] = []
     for key in order_data.keys():
         for img in tqdm(order_data[key]):
+            if img[0] == 'data\\image\\real_dataset\\data\\260\\260_004_right.png':
+                a=3
             slice_img(img,data_slice_path, slice_ordered_dict, number_of_slice, overlap,temp_counter)
     print(temp_counter[0])
     json_object = json.dumps(slice_ordered_dict, indent=4)
@@ -1464,14 +1483,20 @@ def slice_img(img, data_slice_path, slice_ordered_data_dict, number_of_slice, ov
     Slice a Grayscale image into a number of slices with a defined overlap
     Parameters
     ----------
-    img_path, Path :
+    img, list :
+        List containing [path, label and bounding box coordinate]
         Path of the image to be sliced
-    label, str :
-        string for the label
+    data_slice_path, path :
+        path of the slice data
+    slice_ordered_data_dict, dict :
+        Dict containing the sliced data to add new backgrounds
     number_of_slice, int :
         Total number of slices for the image
     overlap, float :
         Value of the overlap between slices 20% = 0.2
+    temp_counter, int :
+        Counter to keep track of the number of each label
+
 
     Returns slices, list :
         List of all the sliced images
@@ -1527,10 +1552,6 @@ def slice_img(img, data_slice_path, slice_ordered_data_dict, number_of_slice, ov
                 new_coordinates.update(is_label_on_image([start_width,end_width],[start_height,end_height],label_dict,[i,j]))
                 #add slice if inside image
                 slices.append(slice_img)
-                #img_slice = Image.fromarray(slice_img)
-                # save img
-                #img_slice.show()
-                #img_slice.save("slide"+str(i)+"_"+str(j)+".png")
     if flag_background:
         for column in range(num_width):
             for row in range(num_height):
@@ -1538,8 +1559,6 @@ def slice_img(img, data_slice_path, slice_ordered_data_dict, number_of_slice, ov
                     img_slice = Image.fromarray(slices[column * num_width + row])
                     img_slice.save(str(data_slice_path / (img_path.stem + "_" + str(column) + "_" + str(row) + ".png")))
                     slice_ordered_data_dict["background"].append([str(data_slice_path / (img_path.stem + "_" + str(column) + "_" + str(row) + ".png")),[]])
-                    #with open(save_path / (img_path.stem + "_" + str(column) + "_" + str(row)+ ".txt"), 'a') as file:
-                    #    file.write("")
     else:
         to_del = []
         for key in new_coordinates.keys():
@@ -1583,7 +1602,18 @@ def slice_img(img, data_slice_path, slice_ordered_data_dict, number_of_slice, ov
             slice_ordered_data_dict["img"].append([str(data_slice_path / (img_path.stem + "_" + str(column) + "_" + str(row) + ".png")),
                                                               new_label])
 
+
 def remove_dupli_recu(new_coordinates):
+    """
+    return flag to remove image if object already used in another image
+    Parameters
+    ----------
+    new_coordinates
+
+    Returns
+    -------
+
+    """
     common_label_keys = set()
     key_with_common =set()
     for key_i in list(new_coordinates.keys()):
