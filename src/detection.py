@@ -451,3 +451,70 @@ def generate_graph(json_path, graphdict):
 
         plt.legend()
         plt.show()
+
+#img resolution is multiple of 32
+if __name__ == "__main__":
+
+    #training(model_name="D:\Documents\Cranfield\IRP\Eyes-Out\\runs\detect\yolov8s-airborn-detect-2304imgz-20-copy\weights\last.pt",imgz=2304,epochs = 5,batch = 1,worker = 8,name = "yolov8s-airborn-detect-2304imgz-20-copy", resume = True)
+    """
+    print("start")
+
+    resolution = [4608, 2592]
+    #model = YOLO("runs\detect\\test_petitbatch3\weights\\best.pt")
+    #model = YOLO("D:\Documents\Cranfield\IRP\Eyes-Out\\runs\detect_crescent\Training_imgz2304_sliced_100epochs\weights\\best.pt")
+    #list_img = Path("data\image\\real_dataset3\\test\\images").iterdir()
+    #result = {}
+    #result = model.predict([str(img) for img in list_img])
+    #for i in tqdm(list_img):
+    #    result[i.stem] = model.predict(str(i))[0]
+    result = predict_sahi("D:\Documents\Cranfield\IRP\Eyes-Out\\runs\detect_crescent\Training_imgz2304_sliced_100epochs\weights\\best.pt",Path("data\image\\real_dataset3\\test\\images").iterdir(),
+                [math.ceil(resolution[0]/2* 1.2),math.ceil(resolution[1]/2 * 1.2)],[0.2,0.2],0.3,'cuda:0')
+    reformed_result ={}
+    for i in result.keys():
+        reformed_result[i] = reformat_predict(result[i])
+    #result = get_img_log("01_003_right",Path("D:\Documents\Cranfield\IRP\Eyes-Out\data\image\\real_dataset2\sim_log.json"))
+    #print(result)
+
+    IOU_treshold = 0.2
+    eval_df = create_evaluation_df(Path("D:\Documents\Cranfield\IRP\Eyes-Out\data\image\\real_dataset3\\test\images"),
+                                   reformed_result,Path("D:\Documents\Cranfield\IRP\Eyes-Out\data\image\\real_dataset3\sim_log.json"),IOU_treshold,True)
+    #print(eval_df)
+    """
+    pl.Config.set_tbl_cols(100)
+
+    #pl.Config.set_tbl_rows(100)
+    #pl.Config.set_fmt_str_lengths(100)
+    #result = eval_df.filter(pl.col("Img_path") == "D:\Documents\Cranfield\IRP\Eyes-Out\data\image\\real_dataset\\test\images\\01_015_front.png")
+    generate_graph(Path("/data/image/real_dataset3/test/test_data.json"),
+                   [{"x": "Pred_result", "y": "Distance"},
+                    {"x": "Pred_result", "y": "Timeoftheday"},
+                    {"x": "Pred_result", "y": "Level"},
+                    {"x": "Pred_result","y":"Weather_param"},
+                    {"x": "Duplicate?","y":"Pred_result"}])
+
+    #print(result)
+    a=3
+
+    """
+    training("yolov8m.pt", 2304, 20, 1, 4, 'yolov8m-airborn-detect-2304imgz-20epochs')
+    weight_path = "runs\detect\yolov8s-airborn-detect-2304imgz-100epochs\weights\\best.pt"
+    model = YOLO(weight_path)
+    # Run batched inference on a list of images
+    data_path = Path("D:\Documents\Cranfield\IRP\Eyes-Out\data\image\\real_dataset2\\test\images")
+    list_img = list(data_path.iterdir())
+    print(list_img[0:5])
+    results = model.predict(list_img[0:5],imgsz=4608, conf=0.3,device="cpu")  # return a list of Results objects
+    sahi_model = AutoDetectionModel.from_pretrained(
+     model_type='yolov8',
+     model_path=weight_path,
+     confidence_threshold=0.3,
+     device='cuda:0'
+     )
+    result = get_sliced_prediction(str(list_img[2]),
+                                   sahi_model,
+                                   slice_height= 256,
+                                   slice_width= 256,
+                                   overlap_width_ratio=0.2,
+                                   overlap_height_ratio=0.2)
+    a=3
+    """
