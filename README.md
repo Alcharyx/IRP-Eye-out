@@ -68,6 +68,7 @@ vehicle_dict = {1: {"Name": "Balloon1",
 
 used_list = ["Balloon1","Balloon2","Ju-87","Piper","Agusta","AW101"]
 dist_interval =[1000,4000]
+camera_angle = ["front", "back", "right", "left"]
 level_list = ["LandscapeMap"]
 weather_dict = {"3AM":"2023-06-15 11:15:00",
                 "6AM":"2023-06-15 14:15:00",
@@ -80,7 +81,7 @@ weather_dict = {"3AM":"2023-06-15 11:15:00",
 path = Path("data/image/data_1000min_4000max")
 
 #generate data
-data_generation.dataset_generation(path, vehicle_dict, used_list, 600, ["front", "back", "right", "left"], level_list,
+data_generation.dataset_generation(path, vehicle_dict, used_list, 600, camera_angle, level_list,
                                    weather_dict, dist_interval)
 #order normal data
 data_generation.order_dataset(path, dist_interval)
