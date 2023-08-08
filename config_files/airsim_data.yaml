@@ -1,4 +1,4 @@
-path: real_dataset3
+path: test_readme
 train: train/images
 val: val/images
 test: test/images
