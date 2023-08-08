@@ -100,9 +100,9 @@ Here is how to train a Yolov8 model :
 
 Change the config file with the correct parrameters
 ```bash
-from detection import training
+from src.detection import training
 
-training("config_files/yolov8_congi.yaml")
+training("config_files/yolov8_config.yaml")
 ```
 
 ### Evaluate
