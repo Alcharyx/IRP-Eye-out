@@ -112,13 +112,13 @@ Here is how to evaluate your model :
 ```bash
 from pathlib import Path
 import math
-from detection import evaluate_model, generate_graph
+from src.detection import evaluate_model, generate_graph
 
 resolution = [4608, 2592]
-evaluation_df = evaluate_model(Path("best_model.pt"),Path("test/images"),Path("sim_log.json"),
+evaluation_df = evaluate_model(Path("yolov8s.pt"),Path("data/image/test_readme/test/images"),Path("data\image\\test_readme\sim_log.json"),
                "SAHI", 0.3, [math.ceil(resolution[0]/2* 1.2),math.ceil(resolution[1]/2 * 1.2)],
                [0.2,0.2],0.3,'cuda:0',True)
-generate_graph(evaluation_df),
+generate_graph(evaluation_df,
                    [{"x": "Pred_result", "y": "Distance"},
                     {"x": "Pred_result", "y": "Timeoftheday"},
                     {"x": "Pred_result", "y": "Level"},
