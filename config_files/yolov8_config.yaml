@@ -6,21 +6,21 @@ mode: train  # YOLO mode, i.e. train, val, predict, export
 
 # Train settings -------------------------------------------------------------------------------------------------------
 model: yolov8s.pt # path to model file, i.e. yolov8n.pt, yolov8n.yaml
-data: config_files/airsim_data.yaml  # path to data file, i.e. i.e. coco128.yaml
+data: airsim_data.yaml  # path to data file, i.e. i.e. coco128.yaml
 epochs: 100  # number of epochs to train for
 patience: 50  # epochs to wait for no observable improvement for early stopping of training
-batch: 2  # number of images per batch (-1 for AutoBatch)
+batch: 14  # number of images per batch (-1 for AutoBatch)
 imgsz: 2560  # size of input images as integer or w,h
 save: True  # save train checkpoints and predict results
 save_period: -1 # Save checkpoint every x epochs (disabled if < 1)
 cache: False  # True/ram, disk or False. Use cache for data loading
 device: 0 # device to run on, i.e. cuda device=0 or device=0,1,2,3 or device=cpu
-workers: 1  # number of worker threads for data loading (per RANK if DDP)
+workers: 4  # number of worker threads for data loading (per RANK if DDP)
 project: # project name
-name: run_test_readme # experiment name
+name: Final_training_100_epochs # experiment name
 exist_ok: False  # whether to overwrite existing experiment
 pretrained: True   # whether to use a pretrained model
-optimizer: auto  # optimizer to use, choices=['SGD', 'Adam', 'AdamW', 'RMSProp']
+optimizer: AdamW  # optimizer to use, choices=['SGD', 'Adam', 'AdamW', 'RMSProp']
 verbose: True  # whether to print verbose output
 seed: 0  # random seed for reproducibility
 deterministic: True  # whether to enable deterministic mode
@@ -40,7 +40,7 @@ val: True  # validate/test during training
 split: val  # dataset split to use for validation, i.e. 'val', 'test' or 'train'
 save_json: False  # save results to JSON file
 save_hybrid: False  # save hybrid version of labels (labels + additional predictions)
-conf: # object confidence threshold for detection (default 0.25 predict, 0.001 val)
+conf: 0.25 # object confidence threshold for detection (default 0.25 predict, 0.001 val)
 iou: 0.7  # intersection over union (IoU) threshold for NMS
 max_det: 300  # maximum number of detections per image
 half: False  # use half precision (FP16)
