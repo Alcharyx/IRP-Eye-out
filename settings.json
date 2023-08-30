@@ -1,0 +1,145 @@
+{
+    "SettingsVersion": 1.2,
+    "SimMode": "Multirotor",
+    "PawnPaths":{
+        "DefaultQuadrotor": {"PawnBP": "Class'/AirSim/Blueprints/BP_FLyingPawn.BP_FlyingPawn_C'"},
+        "Balloon1": {"PawnBP": "Class'/AirSim/Blueprints/balloon.balloon_C'"},
+        "DJIS900": {"PawnBP": "Class'/AirSim/Blueprints/djis900.djis900_C'"},
+        "Glider": {"PawnBP": "Class'/AirSim/Blueprints/glider.glider_C'"},
+        "Ju-87": {"PawnBP": "Class'/AirSim/Blueprints/ju-87.ju-87_C'"},
+        "Piper": {"PawnBP": "Class'/AirSim/Blueprints/piper.piper_C'"},
+        "Eagle": {"PawnBP": "Class'/AirSim/Blueprints/eagle.eagle_C'"},
+        "Seagull": {"PawnBP": "Class'/AirSim/Blueprints/seagull.seagull_C'"},
+        "AW101": {"PawnBP": "Class'/AirSim/Blueprints/aw101.aw101_C'"},
+        "Agusta": {"PawnBP": "Class'/AirSim/Blueprints/agusta.agusta_C'"},
+        "Antonov": {"PawnBP": "Class'/AirSim/Blueprints/antonov.antonov_C'"},
+        "Balloon2": {"PawnBP": "Class'/AirSim/Blueprints/balloon2.balloon2_C'"}
+    },
+    "Vehicles" : {
+        "camera_vehicle" : {
+            "VehicleType" : "SimpleFlight",
+            "PawnPath" : "DefaultQuadrotor",
+            "AutoCreate" : true,
+            "X": 0, "Y": 0, "Z": -2,
+            "Cameras" : {
+                "front_left": {
+                    "CaptureSettings" : [
+                        {
+                            "ImageType" : 0,
+                            "Width" : 4608, 
+                            "Height" : 2592,
+                            "FOV_Degrees" : 102,
+                            "TargetGamma" : 0.8
+                        }
+                    ],
+                    "X": 0.0, "Y": 0.1, "Z": -0.5,
+                    "Pitch": 0.0, "Roll": 0.0, "Yaw": 0.0
+                },
+                "front_left_depth": {
+                    "CaptureSettings" : [
+                        {
+                            "ImageType" : 2,
+                            "Width" : 4608, 
+                            "Height" : 2592,
+                            "FOV_Degrees" : 102,
+                            "TargetGamma" : 0.8
+                        }
+                    ],
+                    "X": 0.0, "Y": 0.1, "Z": -0.5,
+                    "Pitch": 0.0, "Roll": 0.0, "Yaw": 0.0
+                },
+                "front_right": {
+                    "CaptureSettings" : [
+                        {
+                            "ImageType" : 0,
+                            "Width" : 4608, 
+                            "Height" : 2592,
+                            "FOV_Degrees" : 102,
+                            "TargetGamma" : 0.8
+                        }
+                    ],
+                    "X": 0, "Y": -0.1, "Z": -0.5,
+                    "Pitch": 0.0, "Roll": 0.0, "Yaw": 0.0
+                },
+                "front": {
+                    "CaptureSettings" : [
+                        {
+                            "ImageType" : 0,
+                            "Width" : 4608, 
+                            "Height" : 2592,
+                            "FOV_Degrees" : 102,
+                            "TargetGamma" : 0.8
+                        }
+                    ],
+                    "X": 0, "Y": 0, "Z": -0.5,
+                    "Pitch": 0.0, "Roll": 0.0, "Yaw": 0.0
+                },
+                "back": {
+                    "CaptureSettings" : [
+                        {
+                            "ImageType" : 0,
+                            "Width" : 4608,
+                            "Height" : 2592,
+                            "FOV_Degrees" : 102,
+                            "TargetGamma" : 0.8
+                        }
+                    ],
+                    "X": 0, "Y": 0.00, "Z": -0.5,
+                    "Pitch": 0.0, "Roll": 0.0, "Yaw": 180
+                },
+                "right": {
+                    "CaptureSettings" : [
+                        {
+                            "ImageType" : 0,
+                            "Width" : 4608,
+                            "Height" : 2592,
+                            "FOV_Degrees" : 102,
+                            "TargetGamma" : 0.8
+                        }
+                    ],
+                    "X": 0, "Y": 0.0, "Z": -0.5,
+                    "Pitch": 0.0, "Roll": 0.0, "Yaw": 90
+                },
+                "left": {
+                    "CaptureSettings" : [
+                        {
+                            "ImageType" : 0,
+                            "Width" : 4608,
+                            "Height" : 2592,
+                            "FOV_Degrees" : 102,
+                            "TargetGamma" : 0.8
+                        }
+                    ],
+                    "X": 0, "Y": 0, "Z": -0.5, 
+                    "Pitch": 0.0, "Roll": 0.0, "Yaw": -90
+                },
+                "bottom": {
+                    "CaptureSettings" : [
+                        {
+                            "ImageType" : 0,
+                            "Width" : 4608,
+                            "Height" : 2592,
+                            "FOV_Degrees" : 102,
+                            "TargetGamma" : 0.8
+                        }
+                    ],
+                    "X": 0, "Y": 0, "Z": 0.5,
+                    "Pitch": -90, "Roll": 0.0, "Yaw": 0
+                },
+                "top": {
+                    "CaptureSettings" : [
+                        {
+                            "ImageType" : 0,
+                            "Width" : 4608,
+                            "Height" : 2592,
+                            "FOV_Degrees" : 102,
+                            "TargetGamma" : 0.8
+                        }
+                    ],
+                    "X": 0, "Y": 0, "Z": -0.50,
+                    "Pitch": 90, "Roll": 0.0, "Yaw": 0
+                }
+            }
+        }
+    }   
+}
