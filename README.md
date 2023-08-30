@@ -14,7 +14,7 @@ Change the setting.json from Airsim to the one in the config_file folder
 For the Map there are some free assets available as Landscape Mountain, DesertRally Race or AccuCity in the EpicGame Store for Unreal, don't forget to change the game mode to "AirsimGamemode" before pressing play on the Engine.
 
 
-For Python, install the requirement.txt and be careful on the Pytorch version to be compatible with your own cuda version
+For Python, install the requirement.txt and be careful on the Pytorch version to be compatible with your own cuda version (tested with Python 3.9.7)
 ```bash
 pip install -r requirements.txt
 ```
